@@ -1,0 +1,23 @@
+[
+  {
+    "file": "src/auth/session.py",
+    "old_range": [42, 12],
+    "new_range": [42, 28],
+    "header": "@@ -42,12 +42,28 @@ class SessionStore:",
+    "body": "     def get(self, token: str) -> Session | None:\n         row = self._db.fetchone(\"SELECT * FROM sessions WHERE token = ?\", (token,))\n         return Session.from_row(row) if row else None\n \n-    def create(self, user_id: int) -> Session:\n-        token = secrets.token_urlsafe(32)\n-        self._db.execute(\n-            \"INSERT INTO sessions (token, user_id, created_at) VALUES (?, ?, ?)\",\n-            (token, user_id, time.time()),\n-        )\n-        return Session(token=token, user_id=user_id)\n+    def create(self, user_id: int, scope: str = \"default\") -> Session:\n+        token = secrets.token_urlsafe(32)\n+        now = time.time()\n+        self._db.execute(\n+            \"INSERT INTO sessions (token, user_id, scope, created_at, rotated_at) \"\n+            \"VALUES (?, ?, ?, ?, ?)\",\n+            (token, user_id, scope, now, now),\n+        )\n+        return Session(token=token, user_id=user_id, scope=scope)\n+\n+    def rotate(self, user_id: int) -> int:\n+        \"\"\"Invalidate all live sessions for a user. Returns count rotated.\"\"\"\n+        cur = self._db.execute(\n+            \"DELETE FROM sessions WHERE user_id = ?\", (user_id,)\n+        )\n+        return cur.rowcount\n+\n+    def touch(self, token: str) -> None:\n+        self._db.execute(\n+            \"UPDATE sessions SET rotated_at = ? WHERE token = ?\",\n+            (time.time(), token),\n+        )\n"
+  },
+  {
+    "file": "src/auth/roles.py",
+    "old_range": [18, 6],
+    "new_range": [18, 9],
+    "header": "@@ -18,6 +18,9 @@ def update_role(user_id: int, new_role: str) -> None:",
+    "body": "     conn.execute(\n         \"UPDATE users SET role = ? WHERE id = ?\", (new_role, user_id)\n     )\n+    # Privilege change invalidates existing tokens (PR #142).\n+    rotated = session_store.rotate(user_id)\n+    log.info(\"rotated %d sessions for user %d\", rotated, user_id)\n     conn.commit()\n"
+  },
+  {
+    "file": "tests/test_session.py",
+    "old_range": [0, 0],
+    "new_range": [1, 38],
+    "header": "@@ -0,0 +1,38 @@",
+    "body": "+import time\n+\n+import pytest\n+\n+from auth.session import SessionStore\n+\n+\n+@pytest.fixture\n+def store(tmp_db):\n+    return SessionStore(tmp_db)\n+\n+\n+def test_create_session_assigns_token(store):\n+    s = store.create(user_id=7)\n+    assert s.token\n+    assert store.get(s.token) is not None\n+\n+\n+def test_rotate_invalidates_all_user_sessions(store):\n+    a = store.create(user_id=7)\n+    b = store.create(user_id=7)\n+    c = store.create(user_id=8)\n+\n+    rotated = store.rotate(user_id=7)\n+\n+    assert rotated == 2\n+    assert store.get(a.token) is None\n+    assert store.get(b.token) is None\n+    assert store.get(c.token) is not None\n+\n+\n+def test_rotate_returns_zero_when_no_sessions(store):\n+    assert store.rotate(user_id=999) == 0\n+\n+\n+def test_touch_updates_rotated_at(store):\n+    s = store.create(user_id=7)\n+    time.sleep(0.01)\n+    store.touch(s.token)\n"
+  }
+]
