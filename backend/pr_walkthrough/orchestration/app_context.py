@@ -47,8 +47,14 @@ class AppContext:
                 from pr_walkthrough.fakes import FakeTTS
                 tts = FakeTTS()
         if stt is None:
-            from pr_walkthrough.fakes import FakeSTT
-            stt = FakeSTT()
+            try:
+                from pr_walkthrough.stt.adapter import WhisperSTTAdapter
+                stt = WhisperSTTAdapter()
+            except Exception:
+                # faster-whisper not installable or model fetch failed — fall
+                # back to the dummy so the rest of the app still works.
+                from pr_walkthrough.fakes import FakeSTT
+                stt = FakeSTT()
         if pr_source is None:
             from pr_walkthrough.fakes import FakePRSource
             pr_source = FakePRSource()

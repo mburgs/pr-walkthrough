@@ -47,11 +47,14 @@ async def post_follow_up(
 
     answer_id = ctx.store.save_follow_up(sid, follow_up, answer)
 
-    # Synth audio for the answer
+    # Synth audio for the answer. Same merge dance as chunk_worker — adapters
+    # mix full WAVs and raw PCM, so re-wrap as one valid WAV before caching.
+    from pr_walkthrough.tts._wav import merge_synth_chunks
+
     audio_chunks: list[bytes] = []
     async for wav_chunk in ctx.tts.synth(answer.answer_text):
         audio_chunks.append(wav_chunk)
-    ctx.store.save_follow_up_audio(sid, answer_id, b"".join(audio_chunks))
+    ctx.store.save_follow_up_audio(sid, answer_id, merge_synth_chunks(audio_chunks))
 
     audio_url = f"/sessions/{sid}/follow-up/{answer_id}/audio"
 
