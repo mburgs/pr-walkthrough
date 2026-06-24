@@ -1,0 +1,36 @@
+[project]
+name = "pr-walkthrough-backend"
+version = "0.1.0"
+description = "Backend services for pr-walkthrough (STT stream 5 and others)"
+requires-python = ">=3.11"
+dependencies = [
+    # faster-whisper: CTranslate2-accelerated Whisper for local STT.
+    # Uses quantised models (int8 by default) — fast on CPU, no GPU required.
+    "faster-whisper>=1.0.3",
+    # pydub: audio segment I/O; wraps ffmpeg for WebM/Opus → PCM conversion.
+    # Chosen over librosa because it handles WebM/Opus out of the box and
+    # has a much smaller pure-Python dependency footprint.
+    "pydub>=0.25.1",
+    # numpy: float32 array ops for Whisper's audio input format.
+    "numpy>=1.26",
+    # pydantic: shared contract types (re-exported from contracts/).
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+# Convenience entry-point; direct usage: python -m pr_walkthrough.stt.cli
+pr-walkthrough-stt = "pr_walkthrough.stt.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pr_walkthrough*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
