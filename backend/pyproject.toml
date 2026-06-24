@@ -1,0 +1,38 @@
+[project]
+name = "pr-walkthrough-backend"
+version = "0.1.0"
+description = "Backend for pr-walkthrough"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.6",
+]
+
+[project.optional-dependencies]
+# macOS `say` + `afconvert` — zero Python deps, ships with macOS
+say = []
+
+# Kokoro 82M (Apache-2.0): high-quality neural TTS, runs on CPU
+# Downloads ~300 MB of model weights from HuggingFace on first use.
+kokoro = [
+    "kokoro>=0.9.4",
+    "torch>=2.0",
+]
+
+# Piper: fast ONNX-based TTS; requires a separate voice model download
+# (see backend/tts/README.md for download instructions)
+piper = [
+    "piper-tts>=1.2.0",
+]
+
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pr_walkthrough*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
