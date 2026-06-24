@@ -65,7 +65,10 @@ class SayTTSAdapter:
         except (subprocess.SubprocessError, OSError):
             return ["default", _DEFAULT_VOICE]
 
-    async def synth(self, text: str, voice: str = "default") -> AsyncIterator[bytes]:
+    def synth(self, text: str, voice: str = "default") -> AsyncIterator[bytes]:
+        # Returns the async generator directly so `async for` works without
+        # an extra await. (Was `async def ...: return ...` which produces a
+        # coroutine wrapping the iterator — caller would have to await first.)
         return self._synth_iter(text, voice)
 
     async def _synth_iter(self, text: str, voice: str) -> AsyncIterator[bytes]:

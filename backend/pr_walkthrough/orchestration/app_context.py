@@ -37,8 +37,15 @@ class AppContext:
             from pr_walkthrough.fakes import FakeLLM
             llm = FakeLLM()
         if tts is None:
-            from pr_walkthrough.fakes import FakeTTS
-            tts = FakeTTS()
+            try:
+                from pr_walkthrough.tts import make_tts
+                tts = make_tts()
+            except Exception:
+                # No real engine available (e.g. non-macOS CI without
+                # kokoro/piper) — fall back to the silent fake so the rest of
+                # the app keeps working.
+                from pr_walkthrough.fakes import FakeTTS
+                tts = FakeTTS()
         if stt is None:
             from pr_walkthrough.fakes import FakeSTT
             stt = FakeSTT()

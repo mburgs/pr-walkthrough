@@ -48,6 +48,39 @@ def float32_to_pcm16(samples) -> bytes:  # type: ignore[type-arg]
     return pcm.tobytes()
 
 
+def pcm_from_wav(data: bytes) -> bytes:
+    """Extract raw PCM from a RIFF/WAV blob, or return *data* unchanged if it
+    isn't a WAV.
+
+    Adapters' synth() may yield a mix of complete WAVs (first chunk) and raw
+    PCM (subsequent chunks); the orchestrator runs each chunk through here
+    before concatenating, then wraps the merged PCM with build_wav_bytes()
+    once for cache + browser playback.
+    """
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WAVE":
+        return data  # not a WAV — treat as raw PCM
+
+    offset = 12
+    while offset + 8 <= len(data):
+        chunk_id = data[offset : offset + 4]
+        (chunk_size,) = struct.unpack("<I", data[offset + 4 : offset + 8])
+        if chunk_id == b"data":
+            start = offset + 8
+            return data[start : start + chunk_size]
+        offset += 8 + chunk_size
+    return b""
+
+
+def merge_synth_chunks(chunks: list[bytes]) -> bytes:
+    """Merge an adapter's yielded chunks into a single complete WAV file.
+
+    Each input chunk is either a full WAV (header + PCM) or raw PCM. The
+    output is a single RIFF/WAV at the contract-pinned format.
+    """
+    pcm = b"".join(pcm_from_wav(c) for c in chunks)
+    return build_wav_bytes(pcm)
+
+
 def resample_pcm16(pcm: bytes, src_rate: int, dst_rate: int = TARGET_SAMPLE_RATE) -> bytes:
     """Resample 16-bit mono PCM to the target sample rate using linear interpolation.
 

@@ -106,7 +106,7 @@ class PiperTTSAdapter:
     def available_voices(self) -> list[str]:
         return ["default", _DEFAULT_VOICE_NAME]
 
-    async def synth(self, text: str, voice: str = "default") -> AsyncIterator[bytes]:
+    def synth(self, text: str, voice: str = "default") -> AsyncIterator[bytes]:
         return self._synth_iter(text, voice)
 
     async def _synth_iter(self, text: str, voice: str) -> AsyncIterator[bytes]:

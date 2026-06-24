@@ -76,7 +76,7 @@ class KokoroTTSAdapter:
     def available_voices(self) -> list[str]:
         return ["default"] + _KOKORO_VOICES
 
-    async def synth(self, text: str, voice: str = "default") -> AsyncIterator[bytes]:
+    def synth(self, text: str, voice: str = "default") -> AsyncIterator[bytes]:
         """Yield WAV chunks at 22 050 Hz, 16-bit mono.
 
         The first yielded chunk is a complete WAV file (header + PCM) so the

@@ -54,11 +54,15 @@ async def process_chunk(
         # 6. chunk_complete
         await publish(session_id, {"event_type": "chunk_complete", "chunk_id": chunk.chunk_id})
 
-        # 7. Synthesise audio
+        # 7. Synthesise audio. Adapters yield a mix of headered WAVs (first
+        # chunk) and raw PCM (subsequent), so re-wrap as a single valid WAV
+        # before caching — otherwise the browser <audio> tag can't play it.
+        from pr_walkthrough.tts._wav import merge_synth_chunks
+
         audio_chunks: list[bytes] = []
         async for chunk_bytes in ctx.tts.synth(narration.narration):
             audio_chunks.append(chunk_bytes)
-        audio = b"".join(audio_chunks)
+        audio = merge_synth_chunks(audio_chunks)
         ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio)
 
         # 8. audio_ready
