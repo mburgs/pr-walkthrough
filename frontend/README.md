@@ -1,32 +1,44 @@
-# React + TypeScript + Vite
+# Frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+Vite + React + TypeScript app. Talks to the FastAPI backend in `../backend/`.
 
-Currently, two official plugins are available:
+## Run modes
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+The frontend has two modes, switched by the `VITE_BACKEND_URL` env var:
 
-## React Compiler
+| Mode | When | Behavior |
+|------|------|----------|
+| **Mock** (default) | `VITE_BACKEND_URL` unset | MSW intercepts every API call and serves the `pr_small` fixture from `src/mocks/`. No backend needed. |
+| **Live** | `VITE_BACKEND_URL` set | MSW disables itself; all `fetch`s go to that URL. |
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+## Local dev — frontend only (mock)
 
-## Expanding the Oxlint configuration
-
-If you are developing a production application, we recommend enabling type-aware lint rules by installing `oxlint-tsgolint` and editing `.oxlintrc.json`:
-
-```json
-{
-  "$schema": "./node_modules/oxlint/configuration_schema.json",
-  "plugins": ["react", "typescript", "oxc"],
-  "options": {
-    "typeAware": true
-  },
-  "rules": {
-    "react/rules-of-hooks": "error",
-    "react/only-export-components": ["warn", { "allowConstantExport": true }]
-  }
-}
+```bash
+cd frontend
+npm install
+npm run dev          # http://localhost:5173
 ```
 
-See the [Oxlint rules documentation](https://oxc.rs/docs/guide/usage/linter/rules) for the full list of rules and categories.
+## Local dev — full stack (M2)
+
+Terminal 1 — backend (uses in-process fakes by default; no API keys needed):
+
+```bash
+cd backend
+pip install -e .[dev]
+PYTHONPATH=.. uvicorn pr_walkthrough.main:app --reload --port 8000
+```
+
+Terminal 2 — frontend pointed at the backend:
+
+```bash
+cd frontend
+VITE_BACKEND_URL=http://127.0.0.1:8000 npm run dev
+```
+
+Open <http://localhost:5173>. The app loads the fixture session; navigate
+chunks, hear audio (silent WAV from the fake TTS), submit follow-ups,
+flag concerns, and post them (the fake PRSource returns a synthetic URL).
+
+To exercise real Claude + real `gh`, see the M1 CLI in `backend/pr_walkthrough/m1.py`
+(separate from the browser UI for now).
