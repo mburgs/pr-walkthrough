@@ -7,3 +7,8 @@ dist/
 build/
 *.egg-info/
 .DS_Store
+
+# Runtime artefacts
+sessions.db
+sessions.db-shm
+sessions.db-wal
