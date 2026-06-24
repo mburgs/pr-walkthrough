@@ -62,11 +62,20 @@ class SessionStore:
     """Thread-safe SQLite store. Pass db_path=':memory:' for tests."""
 
     def __init__(self, db_path: str | Path = "sessions.db") -> None:
-        self._db_path = str(db_path)
+        # ":memory:" gives each connection its own private DB, which breaks
+        # cross-thread access (TestClient uses a worker thread). Rewrite to a
+        # shared-cache URI so every connection sees the same in-memory tables.
+        raw = str(db_path)
+        if raw == ":memory:":
+            self._db_path = "file::memory:?cache=shared"
+            self._uri = True
+        else:
+            self._db_path = raw
+            self._uri = False
         self._local = threading.local()
-        # Initialise schema once
-        with self._conn() as conn:
-            conn.executescript(_SCHEMA)
+        # Touch one connection so schema exists before anyone else opens one.
+        with self._conn() as _:
+            pass
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -75,9 +84,16 @@ class SessionStore:
                 self._db_path,
                 check_same_thread=False,
                 isolation_level=None,  # autocommit; we use explicit transactions
+                uri=self._uri,
             )
-            conn.execute("PRAGMA journal_mode=WAL")
+            if not self._uri:
+                conn.execute("PRAGMA journal_mode=WAL")
             conn.row_factory = sqlite3.Row
+            # CREATE TABLE IF NOT EXISTS is idempotent — safe to run per-connection.
+            # Required so worker-thread connections also see the schema (esp. for
+            # shared-cache in-memory, where the DB persists but each connection
+            # still needs its own setup pass at minimum once).
+            conn.executescript(_SCHEMA)
             self._local.conn = conn
         yield self._local.conn
 

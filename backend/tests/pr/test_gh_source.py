@@ -62,7 +62,9 @@ def _make_mock_proc(stdout: str, returncode: int = 0, stderr: str = "") -> Magic
 class _GhCallTracker:
     """Captures each call to create_subprocess_exec and returns preset responses.
 
-    Must be used as an AsyncMock side_effect so the coroutine is awaited properly.
+    Used as side_effect of an AsyncMock patching asyncio.create_subprocess_exec.
+    Must be sync — AsyncMock returns side_effect's return value as the awaited
+    result, so a sync return of the mock proc lands proc in `await create_...()`.
     """
 
     def __init__(self, responses: list[tuple[str, int]]) -> None:
@@ -71,17 +73,11 @@ class _GhCallTracker:
         self.calls: list[tuple[str, ...]] = []
         self._idx = 0
 
-    async def __call__(self, *args: Any, **kwargs: Any) -> MagicMock:
+    def __call__(self, *args: Any, **kwargs: Any) -> MagicMock:
         self.calls.append(args)
         stdout, rc = self.responses[self._idx]
         self._idx += 1
         return _make_mock_proc(stdout, rc)
-
-
-def _async_side_effect(tracker: _GhCallTracker) -> AsyncMock:
-    """Wrap tracker so AsyncMock uses it as the side_effect."""
-    mock = AsyncMock(side_effect=tracker)
-    return mock
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +121,7 @@ class TestGhFetch:
         )
 
         with patch("pr_walkthrough.pr.gh_source.shutil.which", return_value="/usr/bin/gh"):
-            with patch("asyncio.create_subprocess_exec", side_effect=tracker):
+            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=tracker):
                 source = GhPRSource()
                 metadata, hunks = await source.fetch(_FAKE_PR_URL)
 
@@ -176,7 +172,7 @@ class TestGhFetch:
         )
 
         with patch("pr_walkthrough.pr.gh_source.shutil.which", return_value="/usr/bin/gh"):
-            with patch("asyncio.create_subprocess_exec", return_value=proc):
+            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, return_value=proc):
                 source = GhPRSource()
                 with pytest.raises(RuntimeError, match="gh auth login required"):
                     await source.fetch(_FAKE_PR_URL)
@@ -197,7 +193,7 @@ class TestGhPostComment:
         )
 
         with patch("pr_walkthrough.pr.gh_source.shutil.which", return_value="/usr/bin/gh"):
-            with patch("asyncio.create_subprocess_exec", side_effect=tracker):
+            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=tracker):
                 source = GhPRSource()
                 url = await source.post_comment(_FAKE_PR_URL, "hello world")
 
@@ -227,7 +223,7 @@ class TestGhPostComment:
         anchor = CodeAnchor(file="src/foo.py", line_range=(10, 15))
 
         with patch("pr_walkthrough.pr.gh_source.shutil.which", return_value="/usr/bin/gh"):
-            with patch("asyncio.create_subprocess_exec", side_effect=tracker):
+            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=tracker):
                 source = GhPRSource()
                 url = await source.post_comment(_FAKE_PR_URL, "nice catch", anchor)
 
@@ -251,27 +247,28 @@ class TestGhPostComment:
     async def test_inline_comment_single_line_no_start_line(self) -> None:
         """Single-line anchor must NOT include start_line in payload."""
         view_response = json.dumps({"headRefOid": "abc"})
+        api_response = json.dumps({"html_url": "https://example.com/r1"})
 
         captured_input: list[str] = []
 
-        async def fake_exec(*args: Any, **kwargs: Any) -> MagicMock:
-            if "--input" in args:
-                # next call: capture what's piped in via communicate
-                pass
+        def fake_exec(*args: Any, **kwargs: Any) -> MagicMock:
+            # `pr view` first, then `gh api`. Sync — AsyncMock returns this
+            # value as the awaited result.
+            is_view = "view" in args
             proc = MagicMock()
             proc.returncode = 0
-            # Capture the input bytes that will be written
             async def communicate(input: bytes | None = None) -> tuple[bytes, bytes]:
                 if input:
                     captured_input.append(input.decode())
-                return (json.dumps({"html_url": "https://example.com/r1"}).encode(), b"")
+                payload = view_response if is_view else api_response
+                return (payload.encode(), b"")
             proc.communicate = communicate
             return proc
 
         anchor = CodeAnchor(file="foo.py", line_range=(5, 5))
 
         with patch("pr_walkthrough.pr.gh_source.shutil.which", return_value="/usr/bin/gh"):
-            with patch("asyncio.create_subprocess_exec", side_effect=fake_exec):
+            with patch("asyncio.create_subprocess_exec", new_callable=AsyncMock, side_effect=fake_exec):
                 source = GhPRSource()
                 await source.post_comment(_FAKE_PR_URL, "single line", anchor)
 

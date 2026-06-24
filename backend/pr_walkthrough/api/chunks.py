@@ -10,6 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from contracts.schemas import ChunkNarration
 from pr_walkthrough.orchestration import AppContext
+from pr_walkthrough.orchestration.chunk_worker import process_chunk
 
 from .deps import get_app_context
 
@@ -19,6 +20,10 @@ router = APIRouter()
 _LONG_POLL_TIMEOUT = 30.0  # seconds
 _POLL_INTERVAL = 0.2
 
+# Per (session_id, chunk_id) — coalesces concurrent requests so we don't
+# fire a duplicate narration task per long-poll tick.
+_inflight: set[tuple[str, str]] = set()
+
 
 @router.get("/sessions/{sid}/chunks/{cid}", response_model=ChunkNarration)
 async def get_chunk_narration(
@@ -26,8 +31,14 @@ async def get_chunk_narration(
     cid: str,
     ctx: AppContext = Depends(get_app_context),
 ) -> ChunkNarration:
-    """Long-poll: wait up to 30s for the chunk to be narrated, then 504."""
-    _ensure_session(sid, ctx)
+    """Long-poll: wait up to 30s for the chunk to be narrated, then 504.
+
+    Triggers narration on demand if no prefetch task is in flight, so chunks
+    beyond the initial prefetch (e.g. chunk 3+) get narrated when the user
+    actually navigates to them.
+    """
+    state = _ensure_session(sid, ctx)
+    _maybe_kick_off_narration(ctx, state.plan, sid, cid)
     elapsed = 0.0
     while elapsed < _LONG_POLL_TIMEOUT:
         narration = ctx.store.get_narration(sid, cid)
@@ -36,6 +47,26 @@ async def get_chunk_narration(
         await asyncio.sleep(_POLL_INTERVAL)
         elapsed += _POLL_INTERVAL
     raise HTTPException(status_code=504, detail=f"Chunk {cid!r} not ready within timeout")
+
+
+def _maybe_kick_off_narration(ctx: AppContext, plan, sid: str, cid: str) -> None:
+    if ctx.store.get_narration(sid, cid) is not None:
+        return
+    key = (sid, cid)
+    if key in _inflight:
+        return
+    chunk = next((c for c in plan.chunks if c.chunk_id == cid), None)
+    if chunk is None:
+        return
+    _inflight.add(key)
+
+    async def _run():
+        try:
+            await process_chunk(ctx, plan, chunk, sid)
+        finally:
+            _inflight.discard(key)
+
+    asyncio.create_task(_run(), name=f"on-demand-narrate-{sid}-{cid}")
 
 
 @router.get("/sessions/{sid}/chunks/{cid}/audio")
@@ -76,10 +107,11 @@ async def get_chunk_audio(
     )
 
 
-def _ensure_session(sid: str, ctx: AppContext) -> None:
+def _ensure_session(sid: str, ctx: AppContext):
     state = ctx.store.get_session_state(sid)
     if state is None:
         raise HTTPException(status_code=404, detail=f"Session {sid!r} not found")
+    return state
 
 
 async def _iter_bytes(data: bytes, chunk_size: int = 65536):
