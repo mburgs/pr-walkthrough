@@ -1,0 +1,246 @@
+"""SQLite-backed persistent store for sessions, chunk narrations, flags, and Q&A.
+
+Uses only the stdlib sqlite3 module.  All JSON columns store model .model_dump_json().
+Thread safety: every method opens a connection with check_same_thread=False and
+WAL mode for concurrent reads under asyncio thread-pool calls.
+"""
+
+from __future__ import annotations
+
+import json
+import sqlite3
+import threading
+import uuid
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Iterator
+
+from contracts.schemas import (
+    ChunkNarration,
+    Flag,
+    FollowUp,
+    FollowUpAnswer,
+    SessionState,
+    TourPlan,
+)
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS sessions (
+    session_id  TEXT PRIMARY KEY,
+    pr_url      TEXT NOT NULL,
+    plan_json   TEXT NOT NULL,       -- TourPlan JSON
+    current_chunk_id TEXT,
+    created_at  REAL NOT NULL DEFAULT (unixepoch('now'))
+);
+
+CREATE TABLE IF NOT EXISTS chunk_narrations (
+    session_id  TEXT NOT NULL REFERENCES sessions(session_id),
+    chunk_id    TEXT NOT NULL,
+    narration_json TEXT NOT NULL,    -- ChunkNarration JSON
+    audio_bytes BLOB,                -- cached WAV; NULL until synthesised
+    PRIMARY KEY (session_id, chunk_id)
+);
+
+CREATE TABLE IF NOT EXISTS follow_ups (
+    answer_id   TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES sessions(session_id),
+    follow_up_json  TEXT NOT NULL,   -- FollowUp JSON
+    answer_json TEXT NOT NULL,       -- FollowUpAnswer JSON
+    audio_bytes BLOB,                -- spoken answer WAV
+    created_at  REAL NOT NULL DEFAULT (unixepoch('now'))
+);
+
+CREATE TABLE IF NOT EXISTS flags (
+    flag_id     TEXT PRIMARY KEY,
+    session_id  TEXT NOT NULL REFERENCES sessions(session_id),
+    flag_json   TEXT NOT NULL        -- Flag JSON
+);
+"""
+
+
+class SessionStore:
+    """Thread-safe SQLite store. Pass db_path=':memory:' for tests."""
+
+    def __init__(self, db_path: str | Path = "sessions.db") -> None:
+        self._db_path = str(db_path)
+        self._local = threading.local()
+        # Initialise schema once
+        with self._conn() as conn:
+            conn.executescript(_SCHEMA)
+
+    @contextmanager
+    def _conn(self) -> Iterator[sqlite3.Connection]:
+        if not getattr(self._local, "conn", None):
+            conn = sqlite3.connect(
+                self._db_path,
+                check_same_thread=False,
+                isolation_level=None,  # autocommit; we use explicit transactions
+            )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.row_factory = sqlite3.Row
+            self._local.conn = conn
+        yield self._local.conn
+
+    # ------------------------------------------------------------------ sessions
+
+    def create_session(self, plan: TourPlan) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO sessions (session_id, pr_url, plan_json) VALUES (?, ?, ?)",
+                (plan.session_id, plan.pr.url, plan.model_dump_json()),
+            )
+
+    def get_session_state(self, session_id: str) -> SessionState | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT plan_json, current_chunk_id FROM sessions WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        plan = TourPlan.model_validate_json(row["plan_json"])
+        flags = self.list_flags(session_id)
+        return SessionState(
+            plan=plan,
+            current_chunk_id=row["current_chunk_id"],
+            flags=flags,
+        )
+
+    def update_current_chunk(self, session_id: str, chunk_id: str) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE sessions SET current_chunk_id = ? WHERE session_id = ?",
+                (chunk_id, session_id),
+            )
+
+    # ------------------------------------------------------------------ narrations
+
+    def save_narration(self, session_id: str, narration: ChunkNarration) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO chunk_narrations (session_id, chunk_id, narration_json)
+                   VALUES (?, ?, ?)
+                   ON CONFLICT(session_id, chunk_id) DO UPDATE SET narration_json=excluded.narration_json""",
+                (session_id, narration.chunk_id, narration.model_dump_json()),
+            )
+
+    def get_narration(self, session_id: str, chunk_id: str) -> ChunkNarration | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT narration_json FROM chunk_narrations WHERE session_id=? AND chunk_id=?",
+                (session_id, chunk_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return ChunkNarration.model_validate_json(row["narration_json"])
+
+    def save_chunk_audio(self, session_id: str, chunk_id: str, audio: bytes) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO chunk_narrations (session_id, chunk_id, narration_json, audio_bytes)
+                   VALUES (?, ?, '', ?)
+                   ON CONFLICT(session_id, chunk_id) DO UPDATE SET audio_bytes=excluded.audio_bytes""",
+                (session_id, chunk_id, audio),
+            )
+
+    def get_chunk_audio(self, session_id: str, chunk_id: str) -> bytes | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT audio_bytes FROM chunk_narrations WHERE session_id=? AND chunk_id=?",
+                (session_id, chunk_id),
+            ).fetchone()
+        if row is None or row["audio_bytes"] is None:
+            return None
+        return bytes(row["audio_bytes"])
+
+    # ------------------------------------------------------------------ follow-ups
+
+    def save_follow_up(
+        self,
+        session_id: str,
+        follow_up: FollowUp,
+        answer: FollowUpAnswer,
+    ) -> str:
+        answer_id = uuid.uuid4().hex
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO follow_ups (answer_id, session_id, follow_up_json, answer_json)
+                   VALUES (?, ?, ?, ?)""",
+                (
+                    answer_id,
+                    session_id,
+                    follow_up.model_dump_json(),
+                    answer.model_dump_json(),
+                ),
+            )
+        return answer_id
+
+    def save_follow_up_audio(self, session_id: str, answer_id: str, audio: bytes) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE follow_ups SET audio_bytes=? WHERE answer_id=? AND session_id=?",
+                (audio, answer_id, session_id),
+            )
+
+    def get_follow_up_audio(self, session_id: str, answer_id: str) -> bytes | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT audio_bytes FROM follow_ups WHERE answer_id=? AND session_id=?",
+                (answer_id, session_id),
+            ).fetchone()
+        if row is None or row["audio_bytes"] is None:
+            return None
+        return bytes(row["audio_bytes"])
+
+    def list_follow_up_history(self, session_id: str) -> list[ChunkNarration]:
+        """Return all narrations seen so far, for LLM context."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT narration_json FROM chunk_narrations WHERE session_id=? AND narration_json != ''",
+                (session_id,),
+            ).fetchall()
+        return [ChunkNarration.model_validate_json(r["narration_json"]) for r in rows]
+
+    # ------------------------------------------------------------------ flags
+
+    def create_flag(self, session_id: str, flag: Flag) -> Flag:
+        with self._conn() as conn:
+            conn.execute(
+                "INSERT INTO flags (flag_id, session_id, flag_json) VALUES (?, ?, ?)",
+                (flag.flag_id, session_id, flag.model_dump_json()),
+            )
+        return flag
+
+    def get_flag(self, session_id: str, flag_id: str) -> Flag | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT flag_json FROM flags WHERE flag_id=? AND session_id=?",
+                (flag_id, session_id),
+            ).fetchone()
+        if row is None:
+            return None
+        return Flag.model_validate_json(row["flag_json"])
+
+    def update_flag(self, session_id: str, flag: Flag) -> Flag:
+        with self._conn() as conn:
+            conn.execute(
+                "UPDATE flags SET flag_json=? WHERE flag_id=? AND session_id=?",
+                (flag.model_dump_json(), flag.flag_id, session_id),
+            )
+        return flag
+
+    def delete_flag(self, session_id: str, flag_id: str) -> bool:
+        with self._conn() as conn:
+            cur = conn.execute(
+                "DELETE FROM flags WHERE flag_id=? AND session_id=?",
+                (flag_id, session_id),
+            )
+        return cur.rowcount > 0
+
+    def list_flags(self, session_id: str) -> list[Flag]:
+        with self._conn() as conn:
+            rows = conn.execute(
+                "SELECT flag_json FROM flags WHERE session_id=?",
+                (session_id,),
+            ).fetchall()
+        return [Flag.model_validate_json(r["flag_json"]) for r in rows]
