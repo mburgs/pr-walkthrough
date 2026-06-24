@@ -1,0 +1,156 @@
+"""Data contracts shared across every stream.
+
+These Pydantic models are the wire format for the HTTP API, the SSE stream,
+and the LLM structured-output schemas. Treat them as load-bearing — every
+change is a coordinated cross-stream change.
+"""
+
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+Severity = Literal["low", "medium", "high"]
+RelationshipKind = Literal[
+    "definition", "callsite", "test", "prior_version", "sibling"
+]
+
+
+class PRMetadata(BaseModel):
+    """Surface-level info about the PR being reviewed."""
+
+    url: str
+    repo: str  # "owner/name"
+    number: int
+    title: str
+    author: str
+    base_ref: str
+    head_ref: str
+    base_sha: str
+    head_sha: str
+    body: str = ""
+
+
+class Hunk(BaseModel):
+    """A single contiguous diff hunk inside one file."""
+
+    file: str
+    old_range: tuple[int, int]  # (start_line, line_count); 0,0 for added files
+    new_range: tuple[int, int]
+    header: str  # full @@ header line incl. function context
+    body: str  # raw unified-diff body (with +/-/space prefixes)
+
+
+class CodeAnchor(BaseModel):
+    """A pointer into the post-change ('new') side of a file."""
+
+    file: str
+    line_range: tuple[int, int]  # inclusive (start, end)
+
+    @property
+    def is_single_line(self) -> bool:
+        return self.line_range[0] == self.line_range[1]
+
+
+class TourChunk(BaseModel):
+    """One unit of the guided tour. Stable across the session."""
+
+    chunk_id: str  # e.g. "c1", "c2"; assigned by the planner
+    files: list[str]
+    hunks: list[Hunk]
+    summary: str = Field(..., description="One-line shown in the chunk list")
+    rationale_for_position: str = Field(
+        ...,
+        description="Why this chunk appears at this position in the tour",
+    )
+    est_concern_level: Severity
+
+
+class TourPlan(BaseModel):
+    """The ordered tour for a single review session."""
+
+    session_id: str
+    pr: PRMetadata
+    chunks: list[TourChunk]
+
+
+class Highlight(BaseModel):
+    """Region of the diff the narrator wants drawn attention to."""
+
+    anchor: CodeAnchor
+    why: str
+
+
+class RelatedCode(BaseModel):
+    """Code outside the diff that helps understand the change."""
+
+    anchor: CodeAnchor
+    relationship: RelationshipKind
+    snippet: str  # already extracted by the backend; UI just displays
+
+
+class Concern(BaseModel):
+    """Something the model thinks deserves attention or a question."""
+
+    severity: Severity
+    text: str
+    suggested_question: str = Field(
+        ..., description="Ready-to-post wording for a PR comment"
+    )
+    anchor: CodeAnchor | None = None
+
+
+class ChunkNarration(BaseModel):
+    """Everything generated for one chunk: script + side-panel data."""
+
+    chunk_id: str
+    narration: str = Field(
+        ..., description="The spoken script. Plain prose; TTS-friendly."
+    )
+    highlights: list[Highlight] = []
+    related_code: list[RelatedCode] = []
+    concerns: list[Concern] = []
+    look_closer_for: list[str] = Field(
+        default_factory=list,
+        description="Free-form prompts to the reviewer's attention",
+    )
+
+
+class FollowUp(BaseModel):
+    """A user question raised mid-tour."""
+
+    chunk_id: str | None = Field(
+        None,
+        description="Chunk the user was on when they asked; None if tour over",
+    )
+    question_text: str  # transcribed if voice
+    transcript_confidence: float | None = None
+
+
+class FollowUpAnswer(BaseModel):
+    """LLM reply to a follow-up."""
+
+    answer_text: str
+    new_concerns: list[Concern] = []
+    references: list[CodeAnchor] = []
+
+
+class Flag(BaseModel):
+    """A question/concern the reviewer wants tracked for the PR."""
+
+    flag_id: str
+    chunk_id: str
+    anchor: CodeAnchor | None = None
+    severity: Severity
+    body: str = Field(..., description="Editable draft PR comment")
+    posted: bool = False
+    posted_url: str | None = None
+
+
+class SessionState(BaseModel):
+    """Snapshot returned by GET /sessions/{sid}."""
+
+    plan: TourPlan
+    current_chunk_id: str | None = None
+    flags: list[Flag] = []

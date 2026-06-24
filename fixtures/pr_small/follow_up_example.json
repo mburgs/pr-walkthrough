@@ -1,0 +1,22 @@
+{
+  "follow_up": {
+    "chunk_id": "c2",
+    "question_text": "Does session_store.rotate actually share the same database connection as the role update on line 20?",
+    "transcript_confidence": 0.93
+  },
+  "answer": {
+    "answer_text": "Looking at how session_store is wired up in src/auth/__init__.py, it's instantiated at module load with its own connection from the same pool that get_connection() draws from. Both end up as separate connections from the same pool, which means they're separate transactions. So the atomicity guarantee I implied earlier doesn't actually hold — if rotate() succeeds and the subsequent role-update commit fails, you end up with rotated tokens but the old role. The reverse is also possible. This is worth flagging on the PR.",
+    "new_concerns": [
+      {
+        "severity": "high",
+        "text": "session_store uses a separate connection from the one update_role commits on, so the UPDATE and DELETE are not atomic. A failure between the two leaves the system in an inconsistent state.",
+        "suggested_question": "It looks like session_store and update_role draw separate connections from the pool, so the rotate and the role UPDATE aren't actually in the same transaction. Should rotate() take an optional connection argument so the caller can pass its own?",
+        "anchor": {"file": "src/auth/roles.py", "line_range": [21, 23]}
+      }
+    ],
+    "references": [
+      {"file": "src/auth/__init__.py", "line_range": [12, 24]},
+      {"file": "src/auth/roles.py", "line_range": [18, 26]}
+    ]
+  }
+}

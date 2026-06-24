@@ -1,0 +1,39 @@
+{
+  "chunk_id": "c1",
+  "narration": "Alright, let's start in session.py because everything else in this PR builds on what changes here. The SessionStore class is gaining two new methods and modifying a third. First, create() now takes a scope parameter that defaults to 'default', so existing callers won't break, and it writes a rotated_at timestamp alongside created_at. Then the two new methods: rotate() deletes every session for a given user and returns the count, and touch() bumps the rotated_at on a single token. The rotate() method is the security primitive — that's what callers will use to invalidate sessions when something has changed about the user. One thing worth noting: rotate() does a hard DELETE rather than marking sessions as revoked. That's a deliberate design choice — there's no audit trail of the rotation event in this table — so if compliance needs to know who got rotated and when, that signal lives only in the application log, not the database.",
+  "highlights": [
+    {
+      "anchor": {"file": "src/auth/session.py", "line_range": [56, 62]},
+      "why": "The rotate() method — security primitive that the rest of the PR depends on"
+    },
+    {
+      "anchor": {"file": "src/auth/session.py", "line_range": [44, 53]},
+      "why": "create() signature change — new scope parameter and rotated_at column write"
+    }
+  ],
+  "related_code": [
+    {
+      "anchor": {"file": "src/auth/session.py", "line_range": [10, 22]},
+      "relationship": "sibling",
+      "snippet": "class Session:\n    token: str\n    user_id: int\n    scope: str = \"default\"\n    created_at: float = 0.0\n    rotated_at: float = 0.0\n\n    @classmethod\n    def from_row(cls, row):\n        return cls(**row)"
+    }
+  ],
+  "concerns": [
+    {
+      "severity": "medium",
+      "text": "rotate() is a hard DELETE — no audit trail in the sessions table. Any post-hoc forensics has to rely on application logs being retained.",
+      "suggested_question": "Was a soft-delete (revoked_at column) considered for rotate()? Asking because we lose any database-level audit of rotation events.",
+      "anchor": {"file": "src/auth/session.py", "line_range": [56, 62]}
+    },
+    {
+      "severity": "low",
+      "text": "touch() updates rotated_at but isn't called anywhere in this PR. May be intended for a follow-up.",
+      "suggested_question": "Is touch() used by something outside this PR, or scaffolding for a future change?",
+      "anchor": {"file": "src/auth/session.py", "line_range": [64, 69]}
+    }
+  ],
+  "look_closer_for": [
+    "Schema migration for the new scope and rotated_at columns — does this PR include the migration, or is it expected separately?",
+    "What happens to in-flight requests holding a now-deleted token — graceful 401, or stack trace?"
+  ]
+}
