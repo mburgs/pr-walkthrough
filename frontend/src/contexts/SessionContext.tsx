@@ -17,6 +17,7 @@ interface SessionContextValue {
   deleteFlag: (fid: string) => Promise<void>;
   submitFollowUp: (text: string, audioBlob?: Blob) => Promise<FollowUpAnswer>;
   initSession: (prUrl: string) => Promise<void>;
+  resumeSession: (sid: string) => Promise<void>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -65,6 +66,25 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setFlags(state.flags);
       if (plan.chunks.length > 0) {
         setCurrentChunkId(plan.chunks[0].chunk_id);
+      }
+      // Persist sid in URL hash so reloads land back in this session (M7).
+      window.location.hash = `session=${plan.session_id}`;
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const resumeSession = useCallback(async (sid: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const state = await api.getSession(sid);
+      setSession(state);
+      setFlags(state.flags);
+      if (state.plan.chunks.length > 0) {
+        setCurrentChunkId(state.plan.chunks[0].chunk_id);
       }
     } catch (e) {
       setError(String(e));
@@ -137,6 +157,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         deleteFlag,
         submitFollowUp,
         initSession,
+        resumeSession,
       }}
     >
       {children}

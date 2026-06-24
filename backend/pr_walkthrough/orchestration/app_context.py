@@ -34,8 +34,17 @@ class AppContext:
     ) -> None:
         # Import fakes lazily so real adapters can be passed without importing fakes
         if llm is None:
-            from pr_walkthrough.fakes import FakeLLM
-            llm = FakeLLM()
+            import os
+            if os.environ.get("ANTHROPIC_API_KEY"):
+                try:
+                    from pr_walkthrough.llm.adapter import ClaudeLLMAdapter
+                    llm = ClaudeLLMAdapter()
+                except Exception:
+                    from pr_walkthrough.fakes import FakeLLM
+                    llm = FakeLLM()
+            else:
+                from pr_walkthrough.fakes import FakeLLM
+                llm = FakeLLM()
         if tts is None:
             try:
                 from pr_walkthrough.tts import make_tts
@@ -56,11 +65,21 @@ class AppContext:
                 from pr_walkthrough.fakes import FakeSTT
                 stt = FakeSTT()
         if pr_source is None:
-            from pr_walkthrough.fakes import FakePRSource
-            pr_source = FakePRSource()
+            try:
+                from pr_walkthrough.pr.gh_source import GhPRSource
+                pr_source = GhPRSource()
+            except Exception:
+                from pr_walkthrough.fakes import FakePRSource
+                pr_source = FakePRSource()
         if context_retriever is None:
-            from pr_walkthrough.fakes import FakeContext
-            context_retriever = FakeContext()
+            try:
+                from pr_walkthrough.context.retriever import (
+                    RipgrepContextRetriever,
+                )
+                context_retriever = RipgrepContextRetriever()
+            except Exception:
+                from pr_walkthrough.fakes import FakeContext
+                context_retriever = FakeContext()
         if store is None:
             store = SessionStore(db_path)
 
