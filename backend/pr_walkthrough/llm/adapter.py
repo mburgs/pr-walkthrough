@@ -1,0 +1,655 @@
+"""ClaudeLLMAdapter — concrete implementation of LLMAdapter using Anthropic SDK.
+
+Streaming strategy for narrate_chunk
+-------------------------------------
+narrate_chunk returns a ChunkNarration (the full structured result) AND
+exposes token streaming for the narration field so the backend can emit
+NarrationTokenEvent SSEs before the full structured response lands.
+
+The interface is:
+
+    narration, token_stream = await adapter.narrate_chunk_streaming(plan, chunk, related)
+    # token_stream is an AsyncIterator[str] that yields narration tokens.
+    # narration is a ChunkNarration populated after the stream is consumed.
+
+The plain narrate_chunk method is non-streaming and satisfies the LLMAdapter
+Protocol. Use narrate_chunk_streaming when the orchestrator wants to emit
+SSE tokens while waiting for the full structured result.
+
+Prompt caching
+--------------
+- The system prompt is cached via a cache_control breakpoint on its block.
+- For narrate_chunk, the stable diff-context addendum (plan summary + full diff)
+  is placed in a second system block with its own cache_control, so it is only
+  billed on the first call per session for each unique plan.
+- For answer_follow_up, the system prompt cache covers the largest stable block.
+- Minimum cacheable prefix is 1024 tokens on Sonnet 4.6; the system prompt
+  alone is well above that threshold.
+
+Model choices
+-------------
+- plan_tour: claude-opus-4-7 (planning benefits from the strongest model)
+- narrate_chunk: claude-sonnet-4-6 (fast, high-quality narration with streaming)
+- answer_follow_up: claude-sonnet-4-6 (conversational, low latency)
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from typing import Any, AsyncIterator
+
+import anthropic
+from pydantic import ValidationError
+
+from contracts.schemas import (
+    ChunkNarration,
+    CodeAnchor,
+    Concern,
+    FollowUp,
+    FollowUpAnswer,
+    Highlight,
+    Hunk,
+    PRMetadata,
+    RelatedCode,
+    TourChunk,
+    TourPlan,
+)
+
+from .prompts import (
+    SYSTEM_PROMPT,
+    build_follow_up_user_message,
+    build_narrate_chunk_system_addendum,
+    build_narrate_chunk_user_message,
+    build_plan_tour_user_message,
+    format_hunk_for_plan,
+)
+
+# ---------------------------------------------------------------------------
+# JSON schemas for tool-use structured output
+# ---------------------------------------------------------------------------
+
+_CODE_ANCHOR_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "file": {"type": "string"},
+        "line_range": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 2,
+            "maxItems": 2,
+        },
+    },
+    "required": ["file", "line_range"],
+    "additionalProperties": False,
+}
+
+_CONCERN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "severity": {"type": "string", "enum": ["low", "medium", "high"]},
+        "text": {"type": "string"},
+        "suggested_question": {"type": "string"},
+        "anchor": {
+            "anyOf": [_CODE_ANCHOR_SCHEMA, {"type": "null"}],
+        },
+    },
+    "required": ["severity", "text", "suggested_question"],
+    "additionalProperties": False,
+}
+
+_HIGHLIGHT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "anchor": _CODE_ANCHOR_SCHEMA,
+        "why": {"type": "string"},
+    },
+    "required": ["anchor", "why"],
+    "additionalProperties": False,
+}
+
+_RELATED_CODE_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "anchor": _CODE_ANCHOR_SCHEMA,
+        "relationship": {
+            "type": "string",
+            "enum": ["definition", "callsite", "test", "prior_version", "sibling"],
+        },
+        "snippet": {"type": "string"},
+    },
+    "required": ["anchor", "relationship", "snippet"],
+    "additionalProperties": False,
+}
+
+_HUNK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "file": {"type": "string"},
+        "old_range": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 2,
+            "maxItems": 2,
+        },
+        "new_range": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 2,
+            "maxItems": 2,
+        },
+        "header": {"type": "string"},
+        "body": {"type": "string"},
+    },
+    "required": ["file", "old_range", "new_range", "header", "body"],
+    "additionalProperties": False,
+}
+
+_TOUR_CHUNK_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "chunk_id": {"type": "string"},
+        "files": {"type": "array", "items": {"type": "string"}},
+        "hunks": {"type": "array", "items": _HUNK_SCHEMA},
+        "summary": {"type": "string"},
+        "rationale_for_position": {"type": "string"},
+        "est_concern_level": {"type": "string", "enum": ["low", "medium", "high"]},
+    },
+    "required": [
+        "chunk_id",
+        "files",
+        "hunks",
+        "summary",
+        "rationale_for_position",
+        "est_concern_level",
+    ],
+    "additionalProperties": False,
+}
+
+_PR_METADATA_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "url": {"type": "string"},
+        "repo": {"type": "string"},
+        "number": {"type": "integer"},
+        "title": {"type": "string"},
+        "author": {"type": "string"},
+        "base_ref": {"type": "string"},
+        "head_ref": {"type": "string"},
+        "base_sha": {"type": "string"},
+        "head_sha": {"type": "string"},
+        "body": {"type": "string"},
+    },
+    "required": [
+        "url",
+        "repo",
+        "number",
+        "title",
+        "author",
+        "base_ref",
+        "head_ref",
+        "base_sha",
+        "head_sha",
+    ],
+    "additionalProperties": False,
+}
+
+# Tool schemas for each LLM call
+PLAN_TOUR_TOOL = {
+    "name": "emit_tour_plan",
+    "description": (
+        "Emit the ordered tour plan for this pull request. "
+        "Called exactly once with the complete plan."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string"},
+            "pr": _PR_METADATA_SCHEMA,
+            "chunks": {"type": "array", "items": _TOUR_CHUNK_SCHEMA},
+        },
+        "required": ["session_id", "pr", "chunks"],
+        "additionalProperties": False,
+    },
+}
+
+NARRATE_CHUNK_TOOL = {
+    "name": "emit_chunk_narration",
+    "description": (
+        "Emit the full narration for one chunk of the tour. "
+        "Called exactly once per chunk."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "chunk_id": {"type": "string"},
+            "narration": {"type": "string"},
+            "highlights": {"type": "array", "items": _HIGHLIGHT_SCHEMA},
+            "related_code": {"type": "array", "items": _RELATED_CODE_SCHEMA},
+            "concerns": {"type": "array", "items": _CONCERN_SCHEMA},
+            "look_closer_for": {"type": "array", "items": {"type": "string"}},
+        },
+        "required": ["chunk_id", "narration", "highlights", "related_code", "concerns", "look_closer_for"],
+        "additionalProperties": False,
+    },
+}
+
+ANSWER_FOLLOW_UP_TOOL = {
+    "name": "emit_follow_up_answer",
+    "description": (
+        "Emit the answer to a reviewer's follow-up question. "
+        "Called exactly once."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "answer_text": {"type": "string"},
+            "new_concerns": {"type": "array", "items": _CONCERN_SCHEMA},
+            "references": {"type": "array", "items": _CODE_ANCHOR_SCHEMA},
+        },
+        "required": ["answer_text", "new_concerns", "references"],
+        "additionalProperties": False,
+    },
+}
+
+
+# ---------------------------------------------------------------------------
+# Adapter
+# ---------------------------------------------------------------------------
+
+class ClaudeLLMAdapter:
+    """Concrete implementation of LLMAdapter backed by the Anthropic Claude API.
+
+    Parameters
+    ----------
+    api_key:
+        Anthropic API key. Defaults to ANTHROPIC_API_KEY env var.
+    plan_model:
+        Model used for plan_tour. Defaults to claude-opus-4-7 (strongest
+        planning capability; one-shot call so cost is acceptable).
+    narrate_model:
+        Model used for narrate_chunk and answer_follow_up. Defaults to
+        claude-sonnet-4-6 (fast, supports streaming, excellent structured output).
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        plan_model: str = "claude-opus-4-7",
+        narrate_model: str = "claude-sonnet-4-6",
+    ) -> None:
+        self._client = anthropic.AsyncAnthropic(api_key=api_key)
+        self._plan_model = plan_model
+        self._narrate_model = narrate_model
+
+    # ------------------------------------------------------------------
+    # plan_tour
+    # ------------------------------------------------------------------
+
+    async def plan_tour(self, pr: PRMetadata, diff: list[Hunk]) -> TourPlan:
+        """Call Claude Opus to produce an ordered TourPlan for the PR.
+
+        Uses tool-use structured output to guarantee the response parses
+        into TourPlan. The system prompt is cached. The diff is included in
+        the user turn (varies per PR, so not cached).
+        """
+        user_message = build_plan_tour_user_message(pr, diff)
+
+        response = await self._client.messages.create(
+            model=self._plan_model,
+            max_tokens=8192,
+            system=[
+                {
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            tools=[PLAN_TOUR_TOOL],
+            tool_choice={"type": "tool", "name": "emit_tour_plan"},
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+        raw = self._extract_tool_input(response, "emit_tour_plan")
+
+        # Replace placeholder session_id with the pr URL slug
+        raw["session_id"] = self._make_session_id(pr)
+
+        try:
+            plan = TourPlan.model_validate(raw)
+        except ValidationError as e:
+            raise ValueError(
+                f"TourPlan schema mismatch from Claude:\n{e}\n\nRaw input: {json.dumps(raw, indent=2)}"
+            ) from e
+
+        return plan
+
+    # ------------------------------------------------------------------
+    # narrate_chunk (non-streaming)
+    # ------------------------------------------------------------------
+
+    async def narrate_chunk(
+        self,
+        plan: TourPlan,
+        chunk: TourChunk,
+        related: list[RelatedCode],
+    ) -> ChunkNarration:
+        """Narrate one chunk. Non-streaming; satisfies LLMAdapter Protocol."""
+        diff_context = "\n\n".join(
+            f"{h.file} {h.header}\n{h.body}"
+            for c in plan.chunks
+            for h in c.hunks
+        )
+        system_addendum = build_narrate_chunk_system_addendum(plan, diff_context)
+        user_message = build_narrate_chunk_user_message(chunk, related)
+
+        response = await self._client.messages.create(
+            model=self._narrate_model,
+            max_tokens=4096,
+            system=[
+                {
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {
+                    "type": "text",
+                    "text": system_addendum,
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ],
+            tools=[NARRATE_CHUNK_TOOL],
+            tool_choice={"type": "tool", "name": "emit_chunk_narration"},
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+        raw = self._extract_tool_input(response, "emit_chunk_narration")
+        return self._parse_chunk_narration(raw)
+
+    # ------------------------------------------------------------------
+    # narrate_chunk_streaming
+    # ------------------------------------------------------------------
+
+    async def narrate_chunk_streaming(
+        self,
+        plan: TourPlan,
+        chunk: TourChunk,
+        related: list[RelatedCode],
+    ) -> tuple[ChunkNarration, AsyncIterator[str]]:
+        """Narrate one chunk with token streaming on the narration field.
+
+        Returns (ChunkNarration, AsyncIterator[str]).
+
+        The AsyncIterator streams the tokens of the narration text as they
+        arrive from the API. The ChunkNarration is populated once streaming
+        completes. Callers should consume the iterator to drive the stream;
+        the narration object is valid only after the iterator is exhausted.
+
+        Usage::
+
+            narration, tokens = await adapter.narrate_chunk_streaming(plan, chunk, related)
+            async for token in tokens:
+                await sse_queue.put(NarrationTokenEvent(chunk_id=chunk.chunk_id, text=token))
+            # narration is now fully populated
+
+        Note: because tool-use structured output streams via the tool_input
+        delta events (not text_delta), we parse the narration field from the
+        accumulated JSON incrementally. Tokens emitted are the raw JSON
+        characters of the narration string value — we strip the surrounding
+        JSON key and quotes and unescape on-the-fly.
+        """
+        diff_context = "\n\n".join(
+            f"{h.file} {h.header}\n{h.body}"
+            for c in plan.chunks
+            for h in c.hunks
+        )
+        system_addendum = build_narrate_chunk_system_addendum(plan, diff_context)
+        user_message = build_narrate_chunk_user_message(chunk, related)
+
+        # We use a holder so the inner async generator can populate it.
+        result_holder: list[ChunkNarration] = []
+
+        async def _token_stream() -> AsyncIterator[str]:
+            """Yields decoded narration tokens from the streaming response."""
+            accumulated_json = ""
+            in_narration = False
+            narration_chars: list[str] = []
+            # Buffer to detect "narration": " prefix in the JSON stream
+            prefix_buf = ""
+            NARRATION_KEY = '"narration": "'
+            NARRATION_KEY_ALT = '"narration":"'
+
+            async with self._client.messages.stream(
+                model=self._narrate_model,
+                max_tokens=4096,
+                system=[
+                    {
+                        "type": "text",
+                        "text": SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                    {
+                        "type": "text",
+                        "text": system_addendum,
+                        "cache_control": {"type": "ephemeral"},
+                    },
+                ],
+                tools=[NARRATE_CHUNK_TOOL],
+                tool_choice={"type": "tool", "name": "emit_chunk_narration"},
+                messages=[{"role": "user", "content": user_message}],
+            ) as stream:
+                async for event in stream:
+                    if event.type == "content_block_delta":
+                        delta = event.delta
+                        if hasattr(delta, "partial_json"):
+                            chunk_json = delta.partial_json
+                            accumulated_json += chunk_json
+
+                            if not in_narration:
+                                prefix_buf += chunk_json
+                                # Check for narration key in buffered text
+                                for key in (NARRATION_KEY, NARRATION_KEY_ALT):
+                                    idx = prefix_buf.find(key)
+                                    if idx != -1:
+                                        in_narration = True
+                                        # Emit everything after the key
+                                        remainder = prefix_buf[idx + len(key):]
+                                        decoded = _unescape_json_string_fragment(remainder)
+                                        if decoded:
+                                            narration_chars.append(decoded)
+                                            yield decoded
+                                        prefix_buf = ""
+                                        break
+                            else:
+                                # We're inside the narration string — emit tokens
+                                # Stop if we hit the closing quote (unescaped)
+                                decoded, done = _extract_narration_fragment(chunk_json, narration_chars)
+                                if decoded:
+                                    narration_chars.append(decoded)
+                                    yield decoded
+                                if done:
+                                    in_narration = False
+
+                final_msg = await stream.get_final_message()
+
+            # Parse the full structured response
+            raw = self._extract_tool_input(final_msg, "emit_chunk_narration")
+            result_holder.append(self._parse_chunk_narration(raw))
+
+        gen = _token_stream()
+
+        async def _consume_and_expose() -> AsyncIterator[str]:
+            async for tok in gen:
+                yield tok
+
+        # We need to return the ChunkNarration after the stream is consumed.
+        # We do this by returning a special wrapper that exposes the result.
+        wrapper = _StreamWrapper(gen, result_holder)
+        return wrapper.get_result, wrapper  # type: ignore[return-value]
+
+    # ------------------------------------------------------------------
+    # answer_follow_up
+    # ------------------------------------------------------------------
+
+    async def answer_follow_up(
+        self,
+        plan: TourPlan,
+        history: list[ChunkNarration],
+        follow_up: FollowUp,
+    ) -> FollowUpAnswer:
+        """Answer a reviewer's mid-tour question with full session context."""
+        user_message = build_follow_up_user_message(plan, history, follow_up)
+
+        response = await self._client.messages.create(
+            model=self._narrate_model,
+            max_tokens=2048,
+            system=[
+                {
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+            tools=[ANSWER_FOLLOW_UP_TOOL],
+            tool_choice={"type": "tool", "name": "emit_follow_up_answer"},
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+        raw = self._extract_tool_input(response, "emit_follow_up_answer")
+        try:
+            answer = FollowUpAnswer.model_validate(raw)
+        except ValidationError as e:
+            raise ValueError(
+                f"FollowUpAnswer schema mismatch:\n{e}\n\nRaw: {json.dumps(raw, indent=2)}"
+            ) from e
+        return answer
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _extract_tool_input(response: Any, tool_name: str) -> dict:
+        """Extract the input dict from a tool_use block in the response.
+
+        Raises ValueError with a clear message if the expected tool call is
+        absent — this surfaces schema mismatches at the point of failure.
+        """
+        for block in response.content:
+            if block.type == "tool_use" and block.name == tool_name:
+                return block.input  # type: ignore[return-value]
+        stop_reason = getattr(response, "stop_reason", "unknown")
+        raise ValueError(
+            f"Expected tool_use block '{tool_name}' not found in response. "
+            f"stop_reason={stop_reason!r}. "
+            f"Content blocks: {[b.type for b in response.content]}"
+        )
+
+    @staticmethod
+    def _parse_chunk_narration(raw: dict) -> ChunkNarration:
+        """Validate and return a ChunkNarration from a raw tool input dict."""
+        try:
+            return ChunkNarration.model_validate(raw)
+        except ValidationError as e:
+            raise ValueError(
+                f"ChunkNarration schema mismatch:\n{e}\n\nRaw: {json.dumps(raw, indent=2)}"
+            ) from e
+
+    @staticmethod
+    def _make_session_id(pr: PRMetadata) -> str:
+        """Generate a stable session ID from PR metadata."""
+        slug = pr.repo.replace("/", "_") + f"_pr{pr.number}"
+        return f"sess_{slug}"
+
+
+# ---------------------------------------------------------------------------
+# Streaming helpers
+# ---------------------------------------------------------------------------
+
+def _unescape_json_string_fragment(fragment: str) -> str:
+    """Lightly unescape a JSON string fragment (not a complete string).
+
+    Converts common JSON escapes to their character equivalents.
+    Incomplete escape sequences at the fragment boundary are left as-is.
+    """
+    result = (
+        fragment
+        .replace("\\n", "\n")
+        .replace("\\t", "\t")
+        .replace('\\"', '"')
+        .replace("\\\\", "\\")
+    )
+    return result
+
+
+def _extract_narration_fragment(
+    chunk_json: str,
+    accumulated: list[str],
+) -> tuple[str, bool]:
+    """Extract printable narration text from a JSON stream fragment.
+
+    Returns (decoded_text, is_done).
+    is_done is True when the narration string value ends (closing quote seen).
+    """
+    result_chars: list[str] = []
+    i = 0
+    done = False
+    while i < len(chunk_json):
+        ch = chunk_json[i]
+        if ch == "\\":
+            # Escape sequence
+            if i + 1 < len(chunk_json):
+                next_ch = chunk_json[i + 1]
+                if next_ch == "n":
+                    result_chars.append("\n")
+                elif next_ch == "t":
+                    result_chars.append("\t")
+                elif next_ch == '"':
+                    result_chars.append('"')
+                elif next_ch == "\\":
+                    result_chars.append("\\")
+                else:
+                    result_chars.append(next_ch)
+                i += 2
+            else:
+                # Incomplete escape at boundary — skip
+                i += 1
+        elif ch == '"':
+            # Closing quote of the JSON string value
+            done = True
+            break
+        else:
+            result_chars.append(ch)
+            i += 1
+    return "".join(result_chars), done
+
+
+class _StreamWrapper:
+    """Wraps the streaming async generator so the caller can both iterate
+    tokens and retrieve the final ChunkNarration result after exhaustion.
+
+    Usage::
+
+        wrapper = _StreamWrapper(gen, result_holder)
+        async for token in wrapper:
+            ...
+        narration = wrapper.get_result()
+    """
+
+    def __init__(self, gen: AsyncIterator[str], result_holder: list[ChunkNarration]) -> None:
+        self._gen = gen
+        self._result_holder = result_holder
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self._gen
+
+    async def __anext__(self) -> str:
+        return await self._gen.__anext__()  # type: ignore[attr-defined]
+
+    def get_result(self) -> ChunkNarration:
+        """Return the ChunkNarration. Must be called after the iterator is exhausted."""
+        if not self._result_holder:
+            raise RuntimeError(
+                "Stream not yet fully consumed — call get_result() after iterating."
+            )
+        return self._result_holder[0]

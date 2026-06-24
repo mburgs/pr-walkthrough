@@ -1,0 +1,64 @@
+[project]
+name = "pr-walkthrough-backend"
+version = "0.1.0"
+description = "Backend for pr-walkthrough: orchestrator + adapter implementations"
+requires-python = ">=3.11"
+dependencies = [
+    # Shared
+    "pydantic>=2.6",
+
+    # Stream 2 — orchestrator (FastAPI + SSE)
+    "fastapi>=0.111",
+    "uvicorn[standard]>=0.29",
+    "sse-starlette>=2.1",
+    "httpx>=0.27",
+    "anyio>=4.3",
+
+    # Stream 3 — Claude LLM
+    "anthropic>=0.52.0",
+
+    # Stream 5 — local STT (faster-whisper)
+    "faster-whisper>=1.0.3",
+    "pydub>=0.25.1",
+    "numpy>=1.26",
+]
+
+[project.optional-dependencies]
+# Stream 4 — TTS engines; each is an extra so installs stay small.
+# `say` is zero-dep on macOS (system command). Default TTS is `say`.
+say = []
+kokoro = [
+    # Kokoro 82M (Apache-2.0): high-quality neural TTS, runs on CPU.
+    # Downloads ~300 MB of model weights from HuggingFace on first use.
+    "kokoro>=0.9.4",
+    "torch>=2.0",
+]
+piper = [
+    "piper-tts>=1.2.0",
+]
+
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+pr-walkthrough-stt = "pr_walkthrough.stt.cli:main"
+pr-context = "pr_walkthrough.context.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pr_walkthrough*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+# Expose contracts/ from the repo root for `from contracts...` imports.
+pythonpath = [".", ".."]
+markers = [
+    "live: requires real external services (ANTHROPIC_API_KEY, gh auth, GH_LIVE_TEST_PR)",
+]

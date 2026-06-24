@@ -1,0 +1,20 @@
+[
+  {
+    "flag_id": "flag_001",
+    "chunk_id": "c2",
+    "anchor": {"file": "src/auth/roles.py", "line_range": [21, 23]},
+    "severity": "high",
+    "body": "It looks like session_store and update_role draw separate connections from the pool, so the rotate and the role UPDATE aren't actually in the same transaction. A failure between the two would leave the user with a new role but stale tokens, or vice versa. Could rotate() take an optional connection argument so the caller can pass its own?",
+    "posted": false,
+    "posted_url": null
+  },
+  {
+    "flag_id": "flag_002",
+    "chunk_id": "c3",
+    "anchor": {"file": "tests/test_session.py", "line_range": [1, 1]},
+    "severity": "medium",
+    "body": "There's no test asserting that update_role() actually calls session_store.rotate(). Removing the rotate line from roles.py wouldn't break any test. Worth adding a test in test_roles.py?",
+    "posted": false,
+    "posted_url": null
+  }
+]

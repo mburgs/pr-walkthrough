@@ -1,0 +1,83 @@
+.container {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fileHeader {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius) var(--radius) 0 0;
+  padding: 6px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.fileName {
+  color: var(--text);
+  font-family: var(--font-mono);
+}
+
+.diffTable {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--radius) var(--radius);
+  overflow: hidden;
+  margin-bottom: 16px;
+}
+
+.diffTable :global(.diff-gutter) {
+  width: 40px;
+  min-width: 40px;
+  padding: 0 8px;
+  background: var(--surface);
+  color: var(--text-muted);
+  text-align: right;
+  user-select: none;
+  font-size: 11px;
+  border-right: 1px solid var(--border);
+}
+
+.diffTable :global(.diff-code) {
+  padding: 0 8px;
+  white-space: pre;
+}
+
+.diffTable :global(.diff-line-add) :global(.diff-gutter) {
+  background: rgba(14, 68, 41, 0.4);
+}
+.diffTable :global(.diff-line-add) :global(.diff-code) {
+  background: var(--add);
+  color: var(--add-text);
+}
+
+.diffTable :global(.diff-line-delete) :global(.diff-gutter) {
+  background: rgba(74, 11, 11, 0.4);
+}
+.diffTable :global(.diff-line-delete) :global(.diff-code) {
+  background: var(--del);
+  color: var(--del-text);
+}
+
+.diffTable :global(.diff-line-normal) :global(.diff-code) {
+  color: var(--text);
+}
+
+.diffTable :global(.diff-hunk-header) {
+  background: rgba(56,139,253,0.07);
+  color: var(--accent);
+  font-size: 11px;
+  padding: 2px 12px;
+}
+
+.noHunks {
+  color: var(--text-muted);
+  font-size: 13px;
+  padding: 24px 0;
+  text-align: center;
+}
