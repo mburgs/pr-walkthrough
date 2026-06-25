@@ -21,6 +21,13 @@ Reference narration the user wrote by hand for chunk `c1` of calsync#4
 > the file exist and then we write the calendar bytes to the file and log
 > our status.
 
+Concerns are part of the walkthrough, not an appendix. The reviewer voices
+them in the same breath as the code they're about — the way they would on a
+screen-share. The structured `concerns` field still gets populated for the
+side-panel + flag-to-PR workflow, but the segments themselves SAY each
+concern aloud when reaching the relevant lines. Avoid emitting a separate
+"and one more concern…" segment at the end.
+
 Things to imitate:
 - Opens with WHAT the file is and what it does, in one sentence.
 - States the public surface ("init takes X, the main function is Y") before
