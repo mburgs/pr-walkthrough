@@ -14,3 +14,83 @@
 
 Previous: %s
 Incoming: %s useEffect [1] [1, http://127.0.0.1:8200/sessions/sess_5f61509e021b/chunks/c1/audio] @ http://localhost:5180/@vite/client:524
+[31436305ms] ReferenceError: setActiveSegment is not defined
+    at SessionShell (http://localhost:5180/src/components/SessionShell.tsx?t=1782392246757:150:23)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12)
+    at renderWithHooks (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:4213:19)
+    at updateFunctionComponent (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:5569:16)
+    at beginWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:6140:20)
+    at runWithFiberInDEV (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:851:66)
+    at performUnitOfWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8429:92)
+    at workLoopSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8325:37)
+    at renderRootSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8309:6)
+    at performWorkOnRoot (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:7994:27)
+[31436300ms] [WARNING] %s
+
+%s
+ An error occurred in the <SessionShell> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524
+[31493970ms] ReferenceError: ClickableRow is not defined
+    at http://localhost:5180/src/components/RightRail.tsx?t=1782392304408:170:76
+    at Array.map (<anonymous>)
+    at RightRail (http://localhost:5180/src/components/RightRail.tsx?t=1782392304408:170:38)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12)
+    at renderWithHooks (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:4213:19)
+    at updateFunctionComponent (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:5569:16)
+    at beginWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:6140:20)
+    at runWithFiberInDEV (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:851:66)
+    at performUnitOfWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8429:92)
+    at workLoopSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8325:37)
+[31493965ms] [WARNING] %s
+
+%s
+ An error occurred in the <RightRail> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524
+[31502832ms] ReferenceError: ClickableRow is not defined
+    at http://localhost:5180/src/components/RightRail.tsx?t=1782392313091:170:76
+    at Array.map (<anonymous>)
+    at RightRail (http://localhost:5180/src/components/RightRail.tsx?t=1782392313091:170:38)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12)
+    at renderWithHooks (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:4213:19)
+    at updateFunctionComponent (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:5569:16)
+    at beginWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:6140:20)
+    at runWithFiberInDEV (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:851:66)
+    at performUnitOfWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8429:92)
+    at workLoopSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8325:37)
+[31502832ms] [WARNING] %s
+
+%s
+ An error occurred in the <RightRail> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524
+[31516309ms] ReferenceError: ClickableRow is not defined
+    at http://localhost:5180/src/components/RightRail.tsx?t=1782392326633:170:76
+    at Array.map (<anonymous>)
+    at RightRail (http://localhost:5180/src/components/RightRail.tsx?t=1782392326633:170:38)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12)
+    at renderWithHooks (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:4213:19)
+    at updateFunctionComponent (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:5569:16)
+    at beginWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:6140:20)
+    at runWithFiberInDEV (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:851:66)
+    at performUnitOfWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8429:92)
+    at workLoopSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8325:37)
+[31516308ms] [WARNING] %s
+
+%s
+ An error occurred in the <RightRail> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524
+[31530895ms] ReferenceError: ClickableRow is not defined
+    at http://localhost:5180/src/components/RightRail.tsx?t=1782392341239:170:76
+    at Array.map (<anonymous>)
+    at RightRail (http://localhost:5180/src/components/RightRail.tsx?t=1782392341239:170:38)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12)
+    at renderWithHooks (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:4213:19)
+    at updateFunctionComponent (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:5569:16)
+    at beginWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:6140:20)
+    at runWithFiberInDEV (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:851:66)
+    at performUnitOfWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8429:92)
+    at workLoopSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8325:37)
+[31530895ms] [WARNING] %s
+
+%s
+ An error occurred in the <RightRail> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524

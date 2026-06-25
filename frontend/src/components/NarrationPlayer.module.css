@@ -59,6 +59,21 @@
   color: var(--accent-text);
 }
 
+.spinner {
+  width: 10px;
+  height: 10px;
+  border: 1.5px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  display: inline-block;
+  animation: spinnerRot 0.8s linear infinite;
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+@keyframes spinnerRot {
+  to { transform: rotate(360deg); }
+}
+
 .loading {
   display: inline-flex;
   align-items: center;

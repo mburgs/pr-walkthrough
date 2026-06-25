@@ -1,6 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from "react";
 import type {
   ChunkNarration,
+  CodeAnchor,
   Concern,
   Flag,
   TourChunk,
@@ -17,6 +18,15 @@ interface Props {
   collapsed: boolean;
   onToggle: () => void;
   onSegmentChange?: (segmentIndex: number) => void;
+  /** Clicked anchor — drives the diff highlight + scroll. */
+  onAnchorClick?: (anchor: CodeAnchor | null) => void;
+  /** Currently-highlighted anchor (to mark the matching row). */
+  activeAnchor?: CodeAnchor | null;
+}
+
+function anchorEq(a: CodeAnchor | null | undefined, b: CodeAnchor | null | undefined): boolean {
+  if (!a || !b) return false;
+  return a.file === b.file && a.line_range[0] === b.line_range[0] && a.line_range[1] === b.line_range[1];
 }
 
 /**
@@ -32,6 +42,8 @@ export default function RightRail({
   collapsed,
   onToggle,
   onSegmentChange,
+  onAnchorClick,
+  activeAnchor,
 }: Props) {
   const { flags } = useSession();
 
@@ -97,10 +109,15 @@ export default function RightRail({
           defaultOpen={sectionCounts.highlights > 0}
         >
           {narration?.highlights.map((h, i) => (
-            <div key={i} className={styles.row}>
+            <ClickableRow
+              key={i}
+              anchor={h.anchor}
+              activeAnchor={activeAnchor}
+              onClick={() => onAnchorClick?.(h.anchor)}
+            >
               <Anchor file={h.anchor.file} line={h.anchor.line_range} />
               <div className={styles.rowText}>{h.why}</div>
-            </div>
+            </ClickableRow>
           ))}
         </Section>
 
@@ -111,7 +128,13 @@ export default function RightRail({
           defaultOpen={sectionCounts.concerns > 0}
         >
           {narration?.concerns.map((c, i) => (
-            <ConcernRow key={i} concern={c} chunkId={narration.chunk_id} />
+            <ConcernRow
+              key={i}
+              concern={c}
+              chunkId={narration.chunk_id}
+              activeAnchor={activeAnchor}
+              onAnchorClick={onAnchorClick}
+            />
           ))}
         </Section>
 
@@ -209,7 +232,17 @@ function Section({ title, count, defaultOpen = false, severity, accent, children
 
 /* ---------- Concern row (with "Add to flags" action) ---------- */
 
-function ConcernRow({ concern, chunkId }: { concern: Concern; chunkId: string }) {
+function ConcernRow({
+  concern,
+  chunkId,
+  activeAnchor,
+  onAnchorClick,
+}: {
+  concern: Concern;
+  chunkId: string;
+  activeAnchor?: CodeAnchor | null;
+  onAnchorClick?: (anchor: CodeAnchor | null) => void;
+}) {
   const { addFlag } = useSession();
   const [added, setAdded] = useState(false);
 
@@ -224,7 +257,11 @@ function ConcernRow({ concern, chunkId }: { concern: Concern; chunkId: string })
   };
 
   return (
-    <div className={styles.row}>
+    <ClickableRow
+      anchor={concern.anchor ?? null}
+      activeAnchor={activeAnchor}
+      onClick={() => concern.anchor && onAnchorClick?.(concern.anchor)}
+    >
       <div className={styles.rowHeader}>
         <SeverityBadge severity={concern.severity} />
         {concern.anchor && <Anchor file={concern.anchor.file} line={concern.anchor.line_range} />}
@@ -236,9 +273,12 @@ function ConcernRow({ concern, chunkId }: { concern: Concern; chunkId: string })
       {added ? (
         <span className={styles.addedNote}>✓ flagged</span>
       ) : (
-        <button className={styles.miniBtn} onClick={handleAdd}>+ Flag</button>
+        <button
+          className={styles.miniBtn}
+          onClick={(e) => { e.stopPropagation(); handleAdd(); }}
+        >+ Flag</button>
       )}
-    </div>
+    </ClickableRow>
   );
 }
 
@@ -300,6 +340,30 @@ function FlagRow({ flag }: { flag: Flag }) {
 }
 
 /* ---------- Atoms ---------- */
+
+function ClickableRow({
+  anchor, activeAnchor, onClick, children,
+}: {
+  anchor: CodeAnchor | null;
+  activeAnchor?: CodeAnchor | null;
+  onClick?: () => void;
+  children: React.ReactNode;
+}) {
+  const active = anchor ? anchorEq(anchor, activeAnchor) : false;
+  const interactive = !!anchor && !!onClick;
+  return (
+    <div
+      className={`${styles.row} ${interactive ? styles.clickable : ""} ${active ? styles.rowActive : ""}`}
+      onClick={interactive ? onClick : undefined}
+      role={interactive ? "button" : undefined}
+      tabIndex={interactive ? 0 : undefined}
+      onKeyDown={interactive ? (e) => { if (e.key === "Enter") onClick?.(); } : undefined}
+      title={interactive ? "Click to highlight in diff" : undefined}
+    >
+      {children}
+    </div>
+  );
+}
 
 function Anchor({ file, line }: { file: string; line: [number, number] }) {
   const short = file.split("/").slice(-2).join("/");

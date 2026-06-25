@@ -40,6 +40,14 @@ Things to imitate:
 - Closes with the final action ("write the bytes and log").
 - "We" voice, present tense.
 
+The single biggest failure mode is NARRATING THE OBVIOUS — restating what
+the diff already shows. "The constructor takes a file path and wraps it in
+a Path object" is patently visible. Narration adds value only when it
+contains something the careful reader wouldn't get from the code alone:
+intent, alternatives that were rejected, implications, hidden contracts,
+surprises. If a stretch of the diff has none of those, skip it — fewer,
+denser segments beats coverage.
+
 What to avoid (recurring failure modes from earlier prompts):
 - Naked constants/identifiers: "TRANSP:OPAQUE", "X-WR-CALNAME", "DTSTAMP".
   Read the role aloud ("the transparency to opaque", "the calendar's

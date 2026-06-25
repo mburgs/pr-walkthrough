@@ -26,6 +26,8 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   })();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
+  const [pendingPlay, setPendingPlay] = useState(false);  // clicked play, audio still loading
+  const [audioReady, setAudioReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeSegment, setActiveSegment] = useState<number>(-1);
   const [rate, setRate] = useState<number>(() => {
@@ -53,6 +55,8 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   // Reset state when chunk changes
   useEffect(() => {
     setPlaying(false);
+    setPendingPlay(false);
+    setAudioReady(false);
     setError(null);
     setActiveSegment(-1);
     if (audioRef.current) {
@@ -94,8 +98,30 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   const handlePlay = () => {
     const audio = audioRef.current;
     if (!audio) return;
-    if (playing) { audio.pause(); setPlaying(false); }
-    else { audio.play().catch((e) => setError(String(e))); setPlaying(true); }
+    if (playing) {
+      audio.pause();
+      setPlaying(false);
+      setPendingPlay(false);
+      return;
+    }
+    // If the audio isn't loaded yet (backend still synthesising), latch the
+    // user's intent so playback kicks off the moment the data arrives.
+    if (!audioReady) { setPendingPlay(true); return; }
+    audio.play().catch((e) => setError(String(e)));
+    setPlaying(true);
+  };
+
+  const handleCanPlay = () => {
+    setAudioReady(true);
+    // If the user already clicked play, honour it now
+    if (pendingPlay) {
+      const audio = audioRef.current;
+      if (audio) {
+        audio.play().catch((e) => setError(String(e)));
+        setPlaying(true);
+      }
+      setPendingPlay(false);
+    }
   };
 
   const handleReplay = () => {
@@ -142,7 +168,11 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
 
       <div className={styles.controls}>
         <button className={`${styles.btn} ${styles.playBtn}`} onClick={handlePlay} disabled={loading || !narration}>
-          {playing ? "⏸ Pause" : "▶ Play"}
+          {pendingPlay
+            ? <><span className={styles.spinner} aria-hidden /> buffering…</>
+            : playing
+              ? "⏸ Pause"
+              : "▶ Play"}
         </button>
         <button className={styles.btn} onClick={handleReplay} disabled={loading || !narration}>↺</button>
         <button
@@ -169,6 +199,8 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
           onError={handleError}
           onTimeUpdate={handleTimeUpdate}
           onSeeked={handleTimeUpdate}
+          onCanPlay={handleCanPlay}
+          preload="auto"
           style={{ display: "none" }}
         />
       )}

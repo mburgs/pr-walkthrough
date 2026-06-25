@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import type { CodeAnchor } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import ChunkList from "./ChunkList";
 import DiffViewer from "./DiffViewer";
@@ -10,20 +11,23 @@ export default function SessionShell() {
   const { session, currentChunkId, currentNarration, narrationLoading } = useSession();
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
-  const [activeSegment, setActiveSegment] = useState<number>(-1);
+  // Active diff anchor — last-writer-wins between audio segment progression
+  // and manual side-panel clicks. The DiffViewer reacts to whatever is here.
+  const [activeAnchor, setActiveAnchor] = useState<CodeAnchor | null>(null);
 
-  // Reset segment selection when chunk changes (player resets on its own too).
-  useEffect(() => { setActiveSegment(-1); }, [currentChunkId]);
+  // Reset when chunk changes (player and side panel both reset on their own).
+  useEffect(() => { setActiveAnchor(null); }, [currentChunkId]);
+
+  const handleSegmentChange = (idx: number) => {
+    setActiveAnchor(
+      idx >= 0 ? (currentNarration?.segments?.[idx]?.anchor ?? null) : null
+    );
+  };
 
   if (!session) return null;
 
   const currentChunk =
     session.plan.chunks.find((c) => c.chunk_id === currentChunkId) ?? null;
-
-  const activeAnchor =
-    activeSegment >= 0 && currentNarration?.segments?.[activeSegment]?.anchor
-      ? currentNarration.segments[activeSegment].anchor
-      : null;
 
   const shellClass = [
     styles.shell,
@@ -81,7 +85,9 @@ export default function SessionShell() {
           narrationLoading={narrationLoading}
           collapsed={rightCollapsed}
           onToggle={() => setRightCollapsed((v) => !v)}
-          onSegmentChange={setActiveSegment}
+          onSegmentChange={handleSegmentChange}
+          onAnchorClick={setActiveAnchor}
+          activeAnchor={activeAnchor}
         />
       </aside>
 
