@@ -19,6 +19,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     const body = await res.text().catch(() => "");
     throw new Error(`HTTP ${res.status}: ${body}`);
   }
+  // 204 No Content (e.g. DELETE /flags) has an empty body — json() throws.
+  if (res.status === 204) return undefined as T;
   return res.json() as Promise<T>;
 }
 
