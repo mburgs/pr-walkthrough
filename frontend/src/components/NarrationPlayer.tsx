@@ -16,7 +16,10 @@ const SPEEDS = [1, 1.25, 1.5, 1.75, 2] as const;
 const SPEED_STORAGE_KEY = "pr-walkthrough.playbackRate";
 
 export default function NarrationPlayer({ chunk, narration, loading, onSegmentChange }: Props) {
-  const { session, setCurrentChunkId } = useSession();
+  const { session, setCurrentChunkId, regenerateCurrentChunk, narrationGen } = useSession();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [regenerating, setRegenerating] = useState(false);
+  const playRef = useRef<HTMLDivElement>(null);
 
   // "Next chunk" target (null if we're already on the last chunk)
   const nextChunkId = (() => {
@@ -35,9 +38,32 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     return SPEEDS.includes(raw as (typeof SPEEDS)[number]) ? raw : 1;
   });
 
+  // Append narrationGen as a cache-bust so the audio element re-fetches
+  // after a regenerate (same URL otherwise → browser plays stale bytes).
   const audioUrl = session
-    ? getAudioUrl(session.plan.session_id, chunk.chunk_id)
+    ? `${getAudioUrl(session.plan.session_id, chunk.chunk_id)}?v=${narrationGen}`
     : null;
+
+  const handleRegenerate = async () => {
+    setMenuOpen(false);
+    setRegenerating(true);
+    try {
+      await regenerateCurrentChunk();
+    } finally {
+      setRegenerating(false);
+    }
+  };
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const close = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (playRef.current && !playRef.current.contains(t)) setMenuOpen(false);
+    };
+    window.addEventListener("mousedown", close);
+    return () => window.removeEventListener("mousedown", close);
+  }, [menuOpen]);
 
   // Apply rate to the live audio element and persist.
   // Depend on audioUrl too: HTMLAudioElement resets playbackRate to 1 when
@@ -167,13 +193,38 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
       ) : null}
 
       <div className={styles.controls}>
-        <button className={`${styles.btn} ${styles.playBtn}`} onClick={handlePlay} disabled={loading || !narration}>
-          {pendingPlay
-            ? <><span className={styles.spinner} aria-hidden /> buffering…</>
-            : playing
-              ? "⏸ Pause"
-              : "▶ Play"}
-        </button>
+        <div className={styles.playGroup} ref={playRef}>
+          <button className={`${styles.btn} ${styles.playBtn} ${styles.playBtnMain}`} onClick={handlePlay} disabled={loading || !narration || regenerating}>
+            {regenerating
+              ? <><span className={styles.spinner} aria-hidden /> regenerating…</>
+              : pendingPlay
+                ? <><span className={styles.spinner} aria-hidden /> buffering…</>
+                : playing
+                  ? "⏸ Pause"
+                  : "▶ Play"}
+          </button>
+          <button
+            className={`${styles.btn} ${styles.playBtn} ${styles.playBtnCaret}`}
+            onClick={() => setMenuOpen(v => !v)}
+            disabled={loading || regenerating}
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            title="More actions"
+          >▾</button>
+          {menuOpen && (
+            <div className={styles.menu} role="menu">
+              <button
+                className={styles.menuItem}
+                onClick={handleRegenerate}
+                role="menuitem"
+              >
+                <span style={{ display: "inline-block", width: 16 }}>↻</span>
+                Regenerate this chunk
+                <div className={styles.menuItemHint}>Wipes the narration + audio and re-runs the prompt.</div>
+              </button>
+            </div>
+          )}
+        </div>
         <button className={styles.btn} onClick={handleReplay} disabled={loading || !narration}>↺</button>
         <button
           className={styles.btn}

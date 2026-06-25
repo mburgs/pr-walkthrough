@@ -18,6 +18,13 @@ interface SessionContextValue {
   submitFollowUp: (text: string, audioBlob?: Blob) => Promise<FollowUpAnswer>;
   initSession: (prUrl: string) => Promise<void>;
   resumeSession: (sid: string) => Promise<void>;
+  /** Wipe the current chunk's narration + audio cache and re-fetch. Returns
+   * a busting key callers can append to URLs (e.g. audio src) so the browser
+   * doesn't reuse a stale resource. */
+  regenerateCurrentChunk: () => Promise<void>;
+  /** Monotonic per-chunk gen — appended to audio src so the browser
+   * doesn't replay cached bytes from before a regenerate. */
+  narrationGen: number;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -30,6 +37,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [currentNarration, setCurrentNarration] = useState<ChunkNarration | null>(null);
   const [narrationLoading, setNarrationLoading] = useState(false);
   const [flags, setFlags] = useState<Flag[]>([]);
+  const [narrationGen, setNarrationGen] = useState(0);
 
   // Load narration whenever chunk changes
   useEffect(() => {
@@ -54,7 +62,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session, currentChunkId]);
+  }, [session, currentChunkId, narrationGen]);
 
   const initSession = useCallback(async (prUrl: string) => {
     setLoading(true);
@@ -75,6 +83,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       setLoading(false);
     }
   }, []);
+
+  const regenerateCurrentChunk = useCallback(async () => {
+    if (!session || !currentChunkId) return;
+    await api.regenerateChunk(session.plan.session_id, currentChunkId);
+    setNarrationGen((n) => n + 1);
+  }, [session, currentChunkId]);
 
   const resumeSession = useCallback(async (sid: string) => {
     setLoading(true);
@@ -158,6 +172,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         submitFollowUp,
         initSession,
         resumeSession,
+        regenerateCurrentChunk,
+        narrationGen,
       }}
     >
       {children}

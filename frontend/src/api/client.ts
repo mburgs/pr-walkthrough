@@ -40,6 +40,10 @@ export function getChunkNarration(sid: string, cid: string): Promise<ChunkNarrat
   return request<ChunkNarration>(`/sessions/${sid}/chunks/${cid}`);
 }
 
+export function regenerateChunk(sid: string, cid: string): Promise<{ status: string; chunk_id: string }> {
+  return request(`/sessions/${sid}/chunks/${cid}/regenerate`, { method: "POST" });
+}
+
 export function getAudioUrl(sid: string, cid: string): string {
   return `${BASE}/sessions/${sid}/chunks/${cid}/audio`;
 }

@@ -172,6 +172,23 @@ class SessionStore:
                 (session_id, chunk_id, audio),
             )
 
+    def delete_chunk_cache(self, session_id: str, chunk_id: str) -> None:
+        """Wipe one chunk's narration + audio + all variants.
+
+        Used by the regenerate endpoint to force the worker to re-narrate
+        and re-synth — useful when the user has updated the narrate prompt
+        and wants to see the new output without restarting the session.
+        """
+        with self._conn() as conn:
+            conn.execute(
+                "DELETE FROM chunk_narrations WHERE session_id=? AND chunk_id=?",
+                (session_id, chunk_id),
+            )
+            conn.execute(
+                "DELETE FROM audio_variants WHERE session_id=? AND chunk_id=?",
+                (session_id, chunk_id),
+            )
+
     def get_chunk_audio(self, session_id: str, chunk_id: str) -> bytes | None:
         with self._conn() as conn:
             row = conn.execute(

@@ -100,3 +100,7 @@ Visit https://react.dev/link/error-boundaries to learn more about error boundari
 [35493063ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:14335
 [36149955ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5180/@vite/client:992
 [36150406ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:14335
+[36481026ms] [ERROR] The final argument passed to %s changed size between renders. The order and size of this array must remain constant.
+
+Previous: %s
+Incoming: %s useEffect [[object Object], c1] [[object Object], c1, 0] @ http://localhost:5180/@vite/client:524

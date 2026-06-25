@@ -107,6 +107,28 @@ async def get_chunk_audio(
     raise HTTPException(status_code=504, detail=f"Audio for {cid!r} not ready within timeout")
 
 
+@router.post("/sessions/{sid}/chunks/{cid}/regenerate")
+async def regenerate_chunk(
+    sid: str,
+    cid: str,
+    ctx: AppContext = Depends(get_app_context),
+) -> JSONResponse:
+    """Wipe the chunk's narration + audio + variants and re-kick the worker.
+
+    Useful when iterating on the narrate prompt — the client polls
+    /chunks/{cid} (which long-polls until the new narration arrives).
+    """
+    state = _ensure_session(sid, ctx)
+    chunk = next((c for c in state.plan.chunks if c.chunk_id == cid), None)
+    if chunk is None:
+        raise HTTPException(status_code=404, detail=f"Chunk {cid!r} not in plan")
+    ctx.store.delete_chunk_cache(sid, cid)
+    # If a previous narration task is in flight, clear it so the kicker re-fires
+    _inflight.discard((sid, cid))
+    _maybe_kick_off_narration(ctx, state.plan, sid, cid)
+    return JSONResponse({"status": "regenerating", "chunk_id": cid})
+
+
 def _maybe_kick_off_narration_for_audio(ctx: AppContext, sid: str, cid: str) -> None:
     """If the chunk hasn't been narrated yet, kick off the narration task.
 
