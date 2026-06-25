@@ -216,9 +216,14 @@ async def _synth_variant(
     filtered: bool,
     segments,
 ) -> None:
-    """Run TTS for one variant and persist the result + offsets."""
+    """Run TTS for one variant and persist the result + offsets.
+
+    The first call for an engine triggers model construction (XTTS-v2 is
+    ~2GB, F5-TTS ~1GB). That work is sync — push it to a thread so we
+    don't block the FastAPI event loop and starve other in-flight requests.
+    """
     log.info("synth variant %s/%s/filtered=%s for %s", engine, cid, filtered, sid)
-    tts = ctx.tts_registry.get(engine)
+    tts = await asyncio.to_thread(ctx.tts_registry.get, engine)
     texts = [tts_scrub(s.text) if filtered else s.text for s in segments]
     audio, offsets = await synth_segments_to_wav(tts, texts)
     ctx.store.save_audio_variant(sid, cid, engine, filtered, audio, offsets)
