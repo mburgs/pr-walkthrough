@@ -94,3 +94,7 @@ Visit https://react.dev/link/error-boundaries to learn more about error boundari
 %s
  An error occurred in the <RightRail> component. Consider adding an error boundary to your tree to customize error handling behavior.
 Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524
+[31744388ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5180/@vite/client:992
+[31744833ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:14335
+[35492767ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5180/@vite/client:992
+[35493063ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:14335

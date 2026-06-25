@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import type { CodeAnchor } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import ChunkList from "./ChunkList";
@@ -18,11 +18,13 @@ export default function SessionShell() {
   // Reset when chunk changes (player and side panel both reset on their own).
   useEffect(() => { setActiveAnchor(null); }, [currentChunkId]);
 
-  const handleSegmentChange = (idx: number) => {
+  // useCallback so NarrationPlayer's onSegmentChange-watching effect doesn't
+  // re-fire on every parent render and clobber a click-driven anchor.
+  const handleSegmentChange = useCallback((idx: number) => {
     setActiveAnchor(
       idx >= 0 ? (currentNarration?.segments?.[idx]?.anchor ?? null) : null
     );
-  };
+  }, [currentNarration]);
 
   if (!session) return null;
 

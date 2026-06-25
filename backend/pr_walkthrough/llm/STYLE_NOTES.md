@@ -61,3 +61,42 @@ What to avoid (recurring failure modes from earlier prompts):
   "exactly the semantic we want").
 - More than ~4 segments unless the chunk genuinely has that many distinct
   steps. Don't pad to fill space.
+
+## Sources that shaped the prompt
+
+Drawn on for the audience-and-voice framing and for the WHAT TO SAY list:
+
+- **[Reviewing Pull Requests — Chelsea Troy](https://chelseatroy.com/2019/12/18/reviewing-pull-requests/).**
+  Gold-standard piece on review *posture*. Two ideas in particular: (a) "I'm
+  not judging another developer's choices until I have asked all my questions"
+  — frames concerns as questions, not assertions. (b) "Don't write a review
+  that could be replaced by a proofread or a Google search" — the bar for
+  what counts as worth saying. Both pushed us toward the "don't narrate the
+  obvious" stance and the question-shaped `suggested_question`.
+
+- **[Writing A Great Pull Request Description — HackerOne](https://www.hackerone.com/blog/writing-great-pull-request-description).**
+  The What → Why → How → Testing → Visuals recipe. Our narration is biased
+  toward What and a sliver of How; the prompt's WHAT TO SAY list intentionally
+  surfaces Why, Implications, and Test gaps as first-class targets.
+
+- **[The Senior Engineer's Guide to Code Reviews — DEV Community](https://dev.to/middleware/the-senior-engineers-guide-to-the-code-reviews-1p3b).**
+  The "review in passes, each at a different layer" framing — architecture
+  first, then mechanism, then edge cases, then style. Our narration ordering
+  rule (open with shape, then mechanism, then implications) descends from
+  this rather than file-order narration.
+
+- **[The Renaissance of Code Documentation: Introducing Code Walkthrough — InfoQ](https://www.infoq.com/articles/code-walkthrough-documentation/).**
+  Distinguishes walkthroughs from inline docs: connect multiple stations
+  across the code, explain flow. Also surfaces the contrarian instinct that
+  underpins the "looks straightforward but isn't" item in WHAT TO SAY:
+  *if the author says 'this part is straightforward,' it deserves extra scrutiny*.
+
+- **[Walkthrough Documentation — Swimm](https://swimm.io/blog/walkthrough-documentation-where-swimms-main-value-lies).**
+  Frames a code tour as "getting familiarized with a codebase with the help
+  of an experienced contributor who walks you through the code" — the mental
+  model the AUDIENCE & VOICE section is pointing at.
+
+- **[Code Reviews vs Pair Programming — DEV Community](https://dev.to/uday_rayala/code-reviews-vs-pair-programming-560i).**
+  Useful for the "develop a mental model of what the code does and how the
+  changes affect that model" framing — corroborates the importance of intent
+  and implications over surface description.
