@@ -1,32 +1,34 @@
 {
   "chunk_id": "c3",
-  "narration": "Last stop: the new test file. Four tests, covering the create path, rotate isolating between users, rotate returning zero, and touch updating the timestamp. The good news: the cross-user isolation test — creating sessions for users seven and eight, rotating seven, and asserting eight survives — is exactly the test I'd want. That's the regression you'd hate to miss. The gap I see: there's no test for the interaction in roles.py. We test that SessionStore.rotate() works, but not that update_role() actually calls it. A bug where someone removes the rotate() call from roles.py would slip through this test suite. Also, the touch() test stops at calling touch — it doesn't assert that rotated_at actually changed. So we know it doesn't crash, but not that it does the thing.",
-  "highlights": [
-    {
-      "anchor": {"file": "tests/test_session.py", "line_range": [19, 29]},
-      "why": "Cross-user isolation test — the most important assertion in the file"
-    },
-    {
-      "anchor": {"file": "tests/test_session.py", "line_range": [35, 38]},
-      "why": "touch() test doesn't actually assert the behavior under test"
-    }
-  ],
+  "narration": "Last stop: the new test file. Four tests, covering the create path, rotate isolating between users, rotate returning zero, and touch updating the timestamp. The good news: the cross-user isolation test \u2014 creating sessions for users seven and eight, rotating seven, and asserting eight survives \u2014 is exactly the test I'd want. That's the regression you'd hate to miss. The gap I see: there's no test for the interaction in roles.py. We test that SessionStore.rotate() works, but not that update_role() actually calls it. A bug where someone removes the rotate() call from roles.py would slip through this test suite. Also, the touch() test stops at calling touch \u2014 it doesn't assert that rotated_at actually changed. So we know it doesn't crash, but not that it does the thing.",
   "related_code": [],
   "concerns": [
     {
       "severity": "medium",
       "text": "No integration test for the update_role -> session_store.rotate wiring. Removing the rotate call from roles.py would not break any test.",
       "suggested_question": "Should there be a test in test_roles.py that update_role() invalidates the user's sessions? Right now the wire-up is uncovered.",
-      "anchor": {"file": "tests/test_session.py", "line_range": [1, 1]}
+      "anchor": {
+        "file": "tests/test_session.py",
+        "line_range": [
+          1,
+          1
+        ]
+      }
     },
     {
       "severity": "low",
       "text": "test_touch_updates_rotated_at calls touch() but asserts nothing about the result.",
-      "suggested_question": "test_touch_updates_rotated_at doesn't actually assert rotated_at changed — should it read back the row and compare timestamps?",
-      "anchor": {"file": "tests/test_session.py", "line_range": [35, 38]}
+      "suggested_question": "test_touch_updates_rotated_at doesn't actually assert rotated_at changed \u2014 should it read back the row and compare timestamps?",
+      "anchor": {
+        "file": "tests/test_session.py",
+        "line_range": [
+          35,
+          38
+        ]
+      }
     }
   ],
   "look_closer_for": [
-    "The tmp_db fixture — confirm it provides table isolation between tests so create() in one test doesn't leak into rotate() in another"
+    "The tmp_db fixture \u2014 confirm it provides table isolation between tests so create() in one test doesn't leak into rotate() in another"
   ]
 }

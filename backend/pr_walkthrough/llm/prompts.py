@@ -52,7 +52,7 @@ reviewer should be able to copy it verbatim.
 
 Code anchors
 ------------
-All line numbers in highlights, related_code, and concern anchors refer to \
+All line numbers in segment, related_code, and concern anchors refer to \
 post-change line numbers on the new side of the diff (the 'new_range' side). \
 Always provide specific, correct line numbers rather than guessing.
 """
@@ -287,8 +287,7 @@ segments: An ORDERED list of 2-5 narration segments (see WHAT TO SAY for what \
 each should be about; bias toward fewer, denser segments).
 
   - Each segment optionally carries an `anchor`. When set, the UI highlights \
-and scrolls to those lines while the segment plays. The segment IS the \
-highlight — there's no separate highlights list.
+and scrolls to those lines while the segment plays.
   - line_range is [start, end] inclusive, on the new (post-change) side, \
 chosen from the ANCHORABLE LINE RANGES above. Keep anchors tight to what \
 you're actually talking about (1-15 lines is typical; whole hunks rarely).

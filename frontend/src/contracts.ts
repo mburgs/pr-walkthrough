@@ -57,11 +57,6 @@ export interface TourPlan {
   chunks: TourChunk[];
 }
 
-export interface Highlight {
-  anchor: CodeAnchor;
-  why: string;
-}
-
 export interface RelatedCode {
   anchor: CodeAnchor;
   relationship: RelationshipKind;
@@ -87,7 +82,6 @@ export interface ChunkNarration {
   segments: NarrationSegment[];
   /** Cumulative start-time (ms) per segment within the concatenated audio. */
   segment_offsets_ms: number[];
-  highlights: Highlight[];
   related_code: RelatedCode[];
   concerns: Concern[];
   look_closer_for: string[];

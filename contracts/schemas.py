@@ -75,13 +75,6 @@ class TourPlan(BaseModel):
     chunks: list[TourChunk]
 
 
-class Highlight(BaseModel):
-    """Region of the diff the narrator wants drawn attention to."""
-
-    anchor: CodeAnchor
-    why: str
-
-
 class RelatedCode(BaseModel):
     """Code outside the diff that helps understand the change."""
 
@@ -147,7 +140,6 @@ class ChunkNarration(BaseModel):
             "length as `segments`."
         ),
     )
-    highlights: list[Highlight] = []
     related_code: list[RelatedCode] = []
     concerns: list[Concern] = []
     look_closer_for: list[str] = Field(

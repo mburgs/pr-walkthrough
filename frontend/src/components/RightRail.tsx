@@ -48,7 +48,6 @@ export default function RightRail({
   const { flags } = useSession();
 
   const sectionCounts = useMemo(() => ({
-    highlights: narration?.highlights.length ?? 0,
     concerns:   narration?.concerns.length ?? 0,
     related:    narration?.related_code.length ?? 0,
     look:       narration?.look_closer_for.length ?? 0,
@@ -66,7 +65,6 @@ export default function RightRail({
           aria-label="Expand insights panel"
         >‹</button>
         <div className={styles.collapsedStack}>
-          <CollapsedDot label="Highlights" count={sectionCounts.highlights} variant="info" />
           <CollapsedDot label="Concerns" count={totalConcerns} variant="warn" />
           <CollapsedDot label="Related" count={sectionCounts.related} variant="muted" />
           <CollapsedDot label="Look closer" count={sectionCounts.look} variant="muted" />
@@ -102,24 +100,6 @@ export default function RightRail({
             />
           )}
         </div>
-
-        <Section
-          title="Highlights"
-          count={sectionCounts.highlights}
-          defaultOpen={sectionCounts.highlights > 0}
-        >
-          {narration?.highlights.map((h, i) => (
-            <ClickableRow
-              key={i}
-              anchor={h.anchor}
-              activeAnchor={activeAnchor}
-              onClick={() => onAnchorClick?.(h.anchor)}
-            >
-              <Anchor file={h.anchor.file} line={h.anchor.line_range} />
-              <div className={styles.rowText}>{h.why}</div>
-            </ClickableRow>
-          ))}
-        </Section>
 
         <Section
           title="Concerns"

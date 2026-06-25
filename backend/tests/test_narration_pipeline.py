@@ -82,7 +82,7 @@ class TestCoerceAnchors:
 
 
 # ---------------------------------------------------------------------------
-# _parse_chunk_narration: segments → narration text + highlights derivation
+# _parse_chunk_narration: segments → narration text + anchor coercion
 # ---------------------------------------------------------------------------
 
 class TestParseChunkNarration:
@@ -105,27 +105,6 @@ class TestParseChunkNarration:
             NarrationSegment(text="First segment.", anchor=None),
             NarrationSegment(text="Second segment.", anchor=CodeAnchor(file="a.py", line_range=(1, 3))),
         ]
-
-    def test_derives_highlights_from_anchored_segments(self):
-        # The LLM no longer emits a separate `highlights` field; it gets
-        # derived from segments with anchors. (Each anchor → one highlight.)
-        raw = {
-            "chunk_id": "c1",
-            "segments": [
-                {"text": "intro", "anchor": None},
-                {"text": "talking about a.py 1-3", "anchor": {"file": "a.py", "line_range": [1, 3]}},
-                {"text": "talking about a.py 10-12", "anchor": {"file": "a.py", "line_range": [10, 12]}},
-            ],
-            "related_code": [],
-            "concerns": [],
-            "look_closer_for": [],
-        }
-        out = ClaudeLLMAdapter._parse_chunk_narration(raw)
-        assert len(out.highlights) == 2
-        assert out.highlights[0].anchor == CodeAnchor(file="a.py", line_range=(1, 3))
-        assert out.highlights[1].anchor == CodeAnchor(file="a.py", line_range=(10, 12))
-        # The `why` text comes from the segment text
-        assert out.highlights[0].why == "talking about a.py 1-3"
 
     def test_handles_single_element_anchor_in_segment(self):
         # Combines the coercion fix with parsing

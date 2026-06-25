@@ -48,7 +48,6 @@ from contracts.schemas import (
     Concern,
     FollowUp,
     FollowUpAnswer,
-    Highlight,
     Hunk,
     PRMetadata,
     RelatedCode,
@@ -95,16 +94,6 @@ _CONCERN_SCHEMA = {
         },
     },
     "required": ["severity", "text", "suggested_question"],
-    "additionalProperties": False,
-}
-
-_HIGHLIGHT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "anchor": _CODE_ANCHOR_SCHEMA,
-        "why": {"type": "string"},
-    },
-    "required": ["anchor", "why"],
     "additionalProperties": False,
 }
 
@@ -239,8 +228,7 @@ NARRATE_CHUNK_TOOL = {
     "description": (
         "Emit the narration for one chunk as a guided walkthrough. The reviewer "
         "hears segments in order; each anchored segment makes the UI highlight "
-        "and scroll to those lines while it plays. Segments ARE the highlights — "
-        "there is no separate highlights field."
+        "and scroll to those lines while it plays."
     ),
     "input_schema": {
         "type": "object",
@@ -632,14 +620,6 @@ class ClaudeLLMAdapter:
                     if isinstance(s, dict)
                 ),
             }
-        # Derive `highlights` from anchored segments — the segments ARE the
-        # highlights, the LLM no longer emits them separately.
-        if "highlights" not in raw and isinstance(raw.get("segments"), list):
-            raw["highlights"] = [
-                {"anchor": s["anchor"], "why": s.get("text", "").strip()}
-                for s in raw["segments"]
-                if isinstance(s, dict) and isinstance(s.get("anchor"), dict)
-            ]
         # Coerce malformed anchors anywhere in the payload
         _coerce_anchors(raw)
         try:

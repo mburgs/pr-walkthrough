@@ -38,14 +38,6 @@ export async function exportTranscript(sessionId: string, plan: TourPlan): Promi
     lines.push(narration.narration);
     lines.push("");
 
-    if (narration.highlights.length) {
-      lines.push("### Highlights");
-      for (const h of narration.highlights) {
-        lines.push(`- \`${h.anchor.file}:${h.anchor.line_range[0]}-${h.anchor.line_range[1]}\` — ${h.why}`);
-      }
-      lines.push("");
-    }
-
     if (narration.concerns.length) {
       lines.push("### Concerns");
       for (const c of narration.concerns) {

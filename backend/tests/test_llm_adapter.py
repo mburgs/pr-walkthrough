@@ -37,7 +37,6 @@ from contracts.schemas import (
     Concern,
     FollowUp,
     FollowUpAnswer,
-    Highlight,
     Hunk,
     PRMetadata,
     RelatedCode,

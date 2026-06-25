@@ -82,13 +82,6 @@ def _print_narration(chunk: TourChunk, narration: ChunkNarration) -> None:
             print(f"  {line}")
         print()
 
-    if narration.highlights:
-        print("  Highlights:")
-        for h in narration.highlights:
-            a = h.anchor
-            print(f"    {a.file}:{a.line_range[0]}-{a.line_range[1]}  {h.why}")
-        print()
-
     if narration.concerns:
         print("  Concerns:")
         for c in narration.concerns:
