@@ -10,7 +10,7 @@ import c2 from "./fixtures/c2.narration.json";
 import c3 from "./fixtures/c3.narration.json";
 import followUpExample from "./fixtures/follow_up_example.json";
 import flagsExample from "./fixtures/flags_example.json";
-import type { Flag, SessionState, TourPlan } from "../contracts";
+import type { ChunkNarration, Flag, SessionState, TourPlan } from "../contracts";
 
 const SESSION_ID = "sess_pr_small_001";
 const plan = tourPlan as TourPlan;
@@ -19,7 +19,26 @@ const plan = tourPlan as TourPlan;
 let flags: Flag[] = (flagsExample as Flag[]).map((f) => ({ ...f }));
 let flagCounter = 100;
 
-const narrations: Record<string, unknown> = { c1, c2, c3 };
+// Per-chunk regeneration counter; appended to the first segment's text so
+// e2e tests can verify a Regenerate click actually swapped the content.
+const regenCounters: Record<string, number> = {};
+const baseNarrations: Record<string, ChunkNarration> = {
+  c1: c1 as ChunkNarration,
+  c2: c2 as ChunkNarration,
+  c3: c3 as ChunkNarration,
+};
+
+function currentNarration(cid: string): ChunkNarration | undefined {
+  const base = baseNarrations[cid];
+  if (!base) return undefined;
+  const gen = regenCounters[cid] ?? 0;
+  if (gen === 0) return base;
+  // Mutate segment 0 visibly so the UI's script area changes after Regenerate.
+  const segments = base.segments.map((s, i) =>
+    i === 0 ? { ...s, text: `[regen ${gen}] ${s.text}` } : s,
+  );
+  return { ...base, segments };
+}
 
 export const handlers = [
   // POST /sessions — create a new session
@@ -42,7 +61,7 @@ export const handlers = [
 
   // GET /sessions/:sid/chunks/:cid — chunk narration
   http.get("/sessions/:sid/chunks/:cid", ({ params }) => {
-    const narration = narrations[params.cid as string];
+    const narration = currentNarration(params.cid as string);
     if (!narration) {
       return HttpResponse.json({ detail: "chunk not found" }, { status: 404 });
     }
@@ -60,22 +79,32 @@ export const handlers = [
     return HttpResponse.json({ engines: ["kokoro"], cached: [{ engine: "kokoro", filtered: true }] });
   }),
 
-  // GET /sessions/:sid/chunks/:cid/audio.variant — single variant audio
-  http.get("/sessions/:sid/chunks/:cid/audio.variant", async () => {
+  // GET /sessions/:sid/chunks/:cid/audio.variant — single variant audio.
+  // Offsets must have one entry per segment so the player's segment-jump
+  // logic (`offsets[i]`) doesn't no-op on indices ≥ 2.
+  http.get("/sessions/:sid/chunks/:cid/audio.variant", async ({ params }) => {
     const r = await fetch("/silent.wav");
     const blob = await r.blob();
+    const segCount = baseNarrations[params.cid as string]?.segments.length ?? 1;
+    const offsets = Array.from({ length: segCount }, (_, i) => i * 50);
     return new HttpResponse(blob, {
       headers: {
         "Content-Type": "audio/wav",
-        "X-Segment-Offsets-Ms": JSON.stringify([0, 50]),
+        "X-Segment-Offsets-Ms": JSON.stringify(offsets),
         "Access-Control-Expose-Headers": "X-Segment-Offsets-Ms",
       },
     });
   }),
 
-  // POST /sessions/:sid/chunks/:cid/regenerate — wipe + re-kick (MSW just acks)
+  // POST /sessions/:sid/chunks/:cid/regenerate — bumps the in-memory gen
+  // counter so the next narration GET returns visibly different content.
+  // The real backend wipes its narration cache + re-runs the LLM; the
+  // mocked variant just stamps "[regen N] " onto segment 0 so e2e tests
+  // can assert the UI swapped after the click.
   http.post("/sessions/:sid/chunks/:cid/regenerate", ({ params }) => {
-    return HttpResponse.json({ status: "regenerating", chunk_id: params.cid });
+    const cid = params.cid as string;
+    regenCounters[cid] = (regenCounters[cid] ?? 0) + 1;
+    return HttpResponse.json({ status: "regenerating", chunk_id: cid });
   }),
 
   // GET /sessions/:sid/files?path= — full file contents for related-code modal

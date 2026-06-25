@@ -94,6 +94,36 @@ def _identifier_at(line: str, col: int) -> tuple[int, int] | None:
     return None
 
 
+_PROJECT_MARKERS = ("pyproject.toml", "setup.cfg", "setup.py")
+
+
+def _find_python_project_root(anchor_path: Path, repo_root: Path) -> Path:
+    """Walk upward from `anchor_path` looking for the nearest Python project
+    marker (pyproject.toml / setup.cfg / setup.py), stopping at `repo_root`.
+
+    Falls back to `repo_root` if nothing is found — preserves the previous
+    behaviour for vanilla single-package repos and gives monorepos a chance
+    to root Jedi at the actual package boundary so imports resolve.
+    """
+    try:
+        anchor_dir = anchor_path.parent.resolve()
+        repo_resolved = repo_root.resolve()
+    except OSError:
+        return repo_root
+
+    current = anchor_dir
+    while True:
+        if any((current / marker).exists() for marker in _PROJECT_MARKERS):
+            return current
+        if current == repo_resolved or current.parent == current:
+            return repo_root
+        try:
+            current.relative_to(repo_resolved)
+        except ValueError:
+            return repo_root
+        current = current.parent
+
+
 class JediContextRetriever:
     """Resolves cross-repo references for Python anchors via Jedi.
 
@@ -141,11 +171,19 @@ class JediContextRetriever:
         if not anchor_text.strip():
             return []
 
-        # Jedi needs a Project rooted at the repo so it can resolve imports.
+        # Pick the nearest plausible Python package root so monorepos resolve
+        # imports correctly. A bare `jedi.Project(repo_root)` works for
+        # single-package repos but in a layout like
+        #     repo/services/api/pyproject.toml + repo/services/api/app/foo.py
+        # rooting at `repo` means Jedi can't find `from app.foo import bar`.
+        project_root = _find_python_project_root(anchor_path, repo_root)
         try:
-            project = jedi.Project(path=str(repo_root))
+            project = jedi.Project(
+                path=str(project_root),
+                added_sys_path=[str(repo_root)] if project_root != repo_root else [],
+            )
         except Exception as exc:
-            logger.info("Jedi project setup failed for %s: %s", repo_root, exc)
+            logger.info("Jedi project setup failed for %s: %s", project_root, exc)
             return []
 
         try:

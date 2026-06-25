@@ -47,6 +47,18 @@ class TestTtsScrub:
         # Both rewrites in one pass
         assert tts_scrub("a free/busy `Path`") == "a free or busy Path"
 
+    @pytest.mark.parametrize("text", [
+        "the TCP/IP stack",     # all-caps acronym
+        "I/O latency",          # single-char halves
+        "L1/L2 cache",          # digit halves
+        "UTF-8/utf-8",          # contains dash
+        "Add/Update endpoint",  # leading caps (probably a code label)
+    ])
+    def test_leaves_acronyms_and_capitalised_pairs_alone(self, text):
+        # Without the guard, tts_scrub used to read "TCP/IP" as "TCP or IP";
+        # the rewrite is gated on both halves being all-lowercase letters ≥ 2.
+        assert tts_scrub(text) == text
+
 
 # ---------------------------------------------------------------------------
 # _coerce_anchors: LLM occasionally emits a single-element line_range

@@ -20,14 +20,43 @@ export default function RelatedCodeModal({ related, onClose }: Props) {
   const { session } = useSession();
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const targetLineRef = useRef<HTMLDivElement>(null);
 
-  // Keyboard close + focus management. Capture the element that opened the
+  // Keyboard close + focus trap. Capture the element that opened the
   // modal so keyboard users land back on the right row when it closes.
   useEffect(() => {
     const previouslyFocused = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        // Only honour Esc if focus is inside the dialog. Otherwise typing
+        // in the follow-up textarea below the diff would also close us.
+        const dialog = dialogRef.current;
+        if (dialog && dialog.contains(document.activeElement)) {
+          e.stopPropagation();
+          onClose();
+        }
+      } else if (e.key === "Tab") {
+        // Cycle focus within the dialog. Without this, Tab walks out into
+        // the chunk list / right rail behind the backdrop.
+        const dialog = dialogRef.current;
+        if (!dialog) return;
+        const focusables = dialog.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex="-1"])'
+        );
+        if (focusables.length === 0) return;
+        const first = focusables[0];
+        const last = focusables[focusables.length - 1];
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
     window.addEventListener("keydown", onKey);
     closeBtnRef.current?.focus();
     return () => {
@@ -63,6 +92,7 @@ export default function RelatedCodeModal({ related, onClose }: Props) {
   return (
     <div className={styles.backdrop} onMouseDown={onClose} role="presentation">
       <div
+        ref={dialogRef}
         className={styles.dialog}
         role="dialog"
         aria-modal="true"

@@ -14,17 +14,19 @@ from .event_bus import publish
 log = logging.getLogger(__name__)
 
 
-_PATHY_TOKEN = re.compile(r"\S*[/.][/.\w-]*\S*")
-
-
 def tts_scrub(text: str) -> str:
     """Last-mile cleanup before handing a narration segment to TTS.
 
     The prompt already asks the LLM to write spoken-style prose, but a
     stray "free/busy" sometimes slips through and the local TTS reads "/"
     badly. Replace single-slash word pairs like that with " or " — but
-    leave file paths alone (anything with a dot, or with 2+ slashes, is
-    treated as a path token).
+    leave anything that looks like a path, URL, version string, or
+    technical acronym (TCP/IP, I/O, L1/L2) alone.
+
+    Rule: rewrite only when both halves are pure lowercase letters of
+    length ≥ 2. That preserves the common writing-style cases
+    (free/busy, read/write, client/server, input/output) while leaving
+    acronyms and short tokens intact.
     """
     def replace(match: re.Match[str]) -> str:
         token = match.group(0)
@@ -32,13 +34,14 @@ def tts_scrub(text: str) -> str:
         if "." in token or token.count("/") != 1:
             return token
         a, b = token.split("/", 1)
-        # Only swap when both halves are plain word tokens (avoids URLs,
-        # weird punctuation, etc.).
-        if a and b and a.isalnum() and b.isalnum():
+        if (
+            len(a) >= 2 and len(b) >= 2
+            and a.isalpha() and b.isalpha()
+            and a.islower() and b.islower()
+        ):
             return f"{a} or {b}"
         return token
 
-    # Walk every whitespace-separated token and rewrite where appropriate
     text = re.sub(r"\S+", replace, text)
     # Strip markdown backticks — the LLM sometimes wraps identifiers in them
     # for the displayed transcript; TTS would otherwise say "backtick".

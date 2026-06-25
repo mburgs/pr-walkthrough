@@ -8,7 +8,10 @@
 
 import { expect, test } from "@playwright/test";
 
-const APP = "/";
+// Hitting `/` plain shows the homepage form (intentional). The ?pr= query
+// short-circuits straight into MSW's mocked session, regardless of value —
+// the mock returns the same canonical TourPlan for any submitted URL.
+const APP = "/?pr=https://github.com/example-org/auth-service/pull/142";
 const FIXTURE_TITLE = /Rotate session tokens/i;       // from the canonical fixture
 const FIXTURE_SUMMARY = /SessionStore gains rotate/;   // chunk c1 summary text
 
@@ -18,6 +21,21 @@ async function bootSession(page: import("@playwright/test").Page) {
   // Wait until the chunk list has rendered at least one chunk button
   await expect(page.locator('button:has-text("c1")').first()).toBeVisible();
 }
+
+test.describe("homepage", () => {
+  test("plain / shows the PR-URL form and submits into a session", async ({ page }) => {
+    await page.goto("/");
+    const input = page.getByLabel("Pull request URL");
+    await expect(input).toBeVisible();
+    // Submit button is gated on a valid GitHub PR URL pattern.
+    const submit = page.getByRole("button", { name: /Start walkthrough/ });
+    await expect(submit).toBeDisabled();
+    await input.fill("https://github.com/example-org/auth-service/pull/142");
+    await expect(submit).toBeEnabled();
+    await submit.click();
+    await expect(page.getByText(FIXTURE_TITLE).first()).toBeVisible({ timeout: 15_000 });
+  });
+});
 
 test.describe("walkthrough shell", () => {
   test("loads the fixture session and renders chunks + diff", async ({ page }) => {
@@ -57,6 +75,20 @@ test.describe("narration player", () => {
     await expect(
       page.getByRole("menuitem", { name: /Regenerate this chunk/ })
     ).toBeVisible();
+  });
+
+  test("clicking Regenerate replaces the rendered narration content", async ({ page }) => {
+    // The previous test only verifies the menu *exists*. This one clicks the
+    // item and asserts the script area swaps to the new content — the MSW
+    // handler stamps "[regen N] " on segment 0, so we wait for that prefix.
+    await bootSession(page);
+    const scriptArea = page.locator('[class*="script_"]').first();
+    await expect(scriptArea).not.toContainText("[regen 1]");
+
+    await page.getByTitle("More actions").click();
+    await page.getByRole("menuitem", { name: /Regenerate this chunk/ }).click();
+
+    await expect(scriptArea).toContainText("[regen 1]", { timeout: 5000 });
   });
 
   test("clicking the speed button cycles 1× → 1.25×", async ({ page }) => {
