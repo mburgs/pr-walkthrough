@@ -55,6 +55,19 @@ CREATE TABLE IF NOT EXISTS flags (
     session_id  TEXT NOT NULL REFERENCES sessions(session_id),
     flag_json   TEXT NOT NULL        -- Flag JSON
 );
+
+-- One row per (session, chunk, tts engine, filtered) combo. The
+-- audio-variants API populates this lazily on first request so the user
+-- can A/B different engines/filters on the same narration.
+CREATE TABLE IF NOT EXISTS audio_variants (
+    session_id     TEXT NOT NULL,
+    chunk_id       TEXT NOT NULL,
+    engine         TEXT NOT NULL,
+    filtered       INTEGER NOT NULL,
+    audio_bytes    BLOB NOT NULL,
+    offsets_json   TEXT NOT NULL,
+    PRIMARY KEY (session_id, chunk_id, engine, filtered)
+);
 """
 
 
@@ -168,6 +181,58 @@ class SessionStore:
         if row is None or row["audio_bytes"] is None:
             return None
         return bytes(row["audio_bytes"])
+
+    # ------------------------------------------------------------------ audio variants
+
+    def save_audio_variant(
+        self,
+        session_id: str,
+        chunk_id: str,
+        engine: str,
+        filtered: bool,
+        audio: bytes,
+        offsets_ms: list[int],
+    ) -> None:
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO audio_variants
+                   (session_id, chunk_id, engine, filtered, audio_bytes, offsets_json)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(session_id, chunk_id, engine, filtered) DO UPDATE SET
+                       audio_bytes=excluded.audio_bytes,
+                       offsets_json=excluded.offsets_json""",
+                (session_id, chunk_id, engine, 1 if filtered else 0,
+                 audio, json.dumps(offsets_ms)),
+            )
+
+    def get_audio_variant(
+        self,
+        session_id: str,
+        chunk_id: str,
+        engine: str,
+        filtered: bool,
+    ) -> tuple[bytes, list[int]] | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                """SELECT audio_bytes, offsets_json FROM audio_variants
+                   WHERE session_id=? AND chunk_id=? AND engine=? AND filtered=?""",
+                (session_id, chunk_id, engine, 1 if filtered else 0),
+            ).fetchone()
+        if row is None:
+            return None
+        return bytes(row["audio_bytes"]), json.loads(row["offsets_json"])
+
+    def list_audio_variants(
+        self, session_id: str, chunk_id: str
+    ) -> list[tuple[str, bool]]:
+        """Return list of (engine, filtered) tuples already synth'd for this chunk."""
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT engine, filtered FROM audio_variants
+                   WHERE session_id=? AND chunk_id=?""",
+                (session_id, chunk_id),
+            ).fetchall()
+        return [(r["engine"], bool(r["filtered"])) for r in rows]
 
     # ------------------------------------------------------------------ follow-ups
 

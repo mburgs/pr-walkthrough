@@ -72,7 +72,6 @@
   font-size: 11px;
   color: var(--text-dim);
   font-family: var(--font-mono);
-  margin-left: auto;
   letter-spacing: 0.04em;
   text-transform: uppercase;
 }
@@ -107,6 +106,52 @@
   box-shadow: inset 2px 0 0 var(--accent);
   padding-left: 6px;
   margin-left: -6px;
+}
+
+/* ---------- Variant switchers (engine + filter) ---------- */
+
+.variantBar {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding-left: 8px;
+  border-left: 1px solid var(--border-soft);
+}
+
+.select {
+  background: var(--surface);
+  border: 1px solid var(--border-soft);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  letter-spacing: -0.005em;
+}
+.select:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.filterBtn {
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  padding: 4px 8px;
+  border-radius: var(--radius-sm);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  letter-spacing: -0.005em;
+  font-weight: 500;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.filterBtn:hover {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--accent);
 }
 
 .speedBtn {

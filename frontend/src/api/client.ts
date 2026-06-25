@@ -42,6 +42,39 @@ export function getAudioUrl(sid: string, cid: string): string {
   return `${BASE}/sessions/${sid}/chunks/${cid}/audio`;
 }
 
+export function getVariantAudioUrl(
+  sid: string, cid: string, engine: string, filtered: boolean
+): string {
+  return `${BASE}/sessions/${sid}/chunks/${cid}/audio.variant?engine=${encodeURIComponent(engine)}&filtered=${filtered}`;
+}
+
+export async function getAvailableEngines(sid: string, cid: string): Promise<{
+  engines: string[];
+  cached: { engine: string; filtered: boolean }[];
+}> {
+  return request(`/sessions/${sid}/chunks/${cid}/audio/variants`);
+}
+
+/**
+ * Fetch a variant's offsets (from response header). Returns null on 504/error.
+ * The audio itself is downloaded and turned into a blob URL so the player can
+ * point its <audio> src at it once and replay without re-hitting the server.
+ */
+export async function fetchVariant(
+  sid: string, cid: string, engine: string, filtered: boolean
+): Promise<{ blobUrl: string; offsetsMs: number[] } | null> {
+  const url = getVariantAudioUrl(sid, cid, engine, filtered);
+  const res = await fetch(url);
+  if (!res.ok) return null;
+  const blob = await res.blob();
+  const offsetsHeader = res.headers.get("X-Segment-Offsets-Ms");
+  let offsetsMs: number[] = [];
+  if (offsetsHeader) {
+    try { offsetsMs = JSON.parse(offsetsHeader); } catch { /* ignore */ }
+  }
+  return { blobUrl: URL.createObjectURL(blob), offsetsMs };
+}
+
 export function getFollowUpAudioUrl(sid: string, aid: string): string {
   return `${BASE}/sessions/${sid}/follow-up/${aid}/audio`;
 }

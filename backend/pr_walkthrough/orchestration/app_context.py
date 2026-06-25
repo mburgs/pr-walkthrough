@@ -96,3 +96,11 @@ class AppContext:
         self.context: ContextRetriever = context_retriever
         self.store: SessionStore = store
         self.repo_root: Path = Path(repo_root)
+
+        # Multi-engine registry for the audio-variants A/B endpoint. Lazy:
+        # engines are instantiated on first request, not at startup.
+        try:
+            from pr_walkthrough.tts.registry import build_default_registry
+            self.tts_registry = build_default_registry()
+        except Exception:
+            self.tts_registry = None  # tests with fakes don't need this

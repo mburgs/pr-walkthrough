@@ -17,7 +17,7 @@ log = logging.getLogger(__name__)
 _PATHY_TOKEN = re.compile(r"\S*[/.][/.\w-]*\S*")
 
 
-def _tts_scrub(text: str) -> str:
+def tts_scrub(text: str) -> str:
     """Last-mile cleanup before handing a narration segment to TTS.
 
     The prompt already asks the LLM to write spoken-style prose, but a
@@ -44,6 +44,34 @@ def _tts_scrub(text: str) -> str:
     # for the displayed transcript; TTS would otherwise say "backtick".
     text = text.replace("`", "")
     return text
+
+
+async def synth_segments_to_wav(
+    tts,
+    segment_texts: list[str],
+) -> tuple[bytes, list[int]]:
+    """Synthesise an ordered list of segment texts through any TTSAdapter
+    and return (single concatenated WAV, cumulative ms offsets).
+
+    Reused by both the chunk worker (pre-synth default engine) and the
+    audio-variants endpoint (lazy synth alternate engines/filters).
+    """
+    from pr_walkthrough.tts._wav import (
+        build_wav_bytes, pcm_from_wav, TARGET_SAMPLE_RATE,
+    )
+
+    segment_pcm: list[bytes] = []
+    offsets_ms: list[int] = []
+    cumulative_pcm_len = 0
+    for text in segment_texts:
+        seg_chunks: list[bytes] = []
+        async for c in tts.synth(text):
+            seg_chunks.append(c)
+        seg_pcm = b"".join(pcm_from_wav(c) for c in seg_chunks)
+        offsets_ms.append(cumulative_pcm_len * 1000 // (TARGET_SAMPLE_RATE * 2))
+        segment_pcm.append(seg_pcm)
+        cumulative_pcm_len += len(seg_pcm)
+    return build_wav_bytes(b"".join(segment_pcm)), offsets_ms
 
 
 async def process_chunk(
@@ -87,41 +115,34 @@ async def process_chunk(
         # 6. chunk_complete
         await publish(session_id, {"event_type": "chunk_complete", "chunk_id": chunk.chunk_id})
 
-        # 7. Synthesise audio. If the LLM gave us guided-tour segments,
-        # synth each one separately and concat: that way we know each
-        # segment's start offset in the final WAV, which the player uses
-        # to drive the diff highlight/scroll as audio plays.
-        from pr_walkthrough.tts._wav import (
-            merge_synth_chunks, pcm_from_wav, build_wav_bytes, TARGET_SAMPLE_RATE,
-        )
-
+        # 7. Synthesise audio. Per-segment synth so we know each segment's
+        # start offset in the final WAV (used to drive the diff highlight as
+        # audio plays).
         if narration.segments:
-            segment_pcm: list[bytes] = []
-            offsets_ms: list[int] = []
-            cumulative_pcm_len = 0
-            for seg in narration.segments:
-                seg_chunks: list[bytes] = []
-                async for c in ctx.tts.synth(_tts_scrub(seg.text)):
-                    seg_chunks.append(c)
-                # extract PCM from each yielded chunk (mix of WAVs and raw PCM)
-                seg_pcm = b"".join(pcm_from_wav(c) for c in seg_chunks)
-                # Mark this segment's start *before* appending its PCM
-                offsets_ms.append(
-                    cumulative_pcm_len * 1000 // (TARGET_SAMPLE_RATE * 2)
-                )
-                segment_pcm.append(seg_pcm)
-                cumulative_pcm_len += len(seg_pcm)
-            audio = build_wav_bytes(b"".join(segment_pcm))
-            # Persist the offsets back to the narration so the API can serve them
+            audio, offsets_ms = await synth_segments_to_wav(
+                ctx.tts,
+                [tts_scrub(s.text) for s in narration.segments],
+            )
             narration = narration.model_copy(update={"segment_offsets_ms": offsets_ms})
             ctx.store.save_narration(session_id, narration)
         else:
+            from pr_walkthrough.tts._wav import merge_synth_chunks
             audio_chunks: list[bytes] = []
-            async for chunk_bytes in ctx.tts.synth(_tts_scrub(narration.narration)):
+            async for chunk_bytes in ctx.tts.synth(tts_scrub(narration.narration)):
                 audio_chunks.append(chunk_bytes)
             audio = merge_synth_chunks(audio_chunks)
 
         ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio)
+        # Also write the default variant to the audio_variants table so the
+        # frontend's variant switcher can find it under the engine's name.
+        default_engine = type(ctx.tts).__name__.lower().replace("ttsadapter", "")
+        try:
+            ctx.store.save_audio_variant(
+                session_id, narration.chunk_id, default_engine, True, audio,
+                narration.segment_offsets_ms or [],
+            )
+        except Exception:
+            log.warning("failed to register default variant", exc_info=True)
 
         # 8. audio_ready
         audio_url = f"/sessions/{session_id}/chunks/{chunk.chunk_id}/audio"

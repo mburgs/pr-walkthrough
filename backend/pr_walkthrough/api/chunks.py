@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from contracts.schemas import ChunkNarration
 from pr_walkthrough.orchestration import AppContext
-from pr_walkthrough.orchestration.chunk_worker import process_chunk
+from pr_walkthrough.orchestration.chunk_worker import (
+    process_chunk, tts_scrub, synth_segments_to_wav,
+)
 
 from .deps import get_app_context
 
@@ -117,3 +120,117 @@ def _ensure_session(sid: str, ctx: AppContext):
 async def _iter_bytes(data: bytes, chunk_size: int = 65536):
     for i in range(0, len(data), chunk_size):
         yield data[i : i + chunk_size]
+
+
+# ------------------------------------------------------------------ variants
+
+# (sid, cid, engine, filtered) → in-flight task. Coalesces concurrent
+# variant requests so we synth each combo at most once.
+_variant_inflight: dict[tuple[str, str, str, bool], asyncio.Task] = {}
+
+_VARIANT_TIMEOUT = 180.0  # XTTS / F5 first-call cold start can be slow
+_VARIANT_POLL = 0.5
+
+
+@router.get("/sessions/{sid}/chunks/{cid}/audio/variants")
+async def list_variants(
+    sid: str,
+    cid: str,
+    ctx: AppContext = Depends(get_app_context),
+) -> JSONResponse:
+    """List engines available + variants already cached for this chunk.
+
+    The frontend renders the engine + filter switchers based on `engines`
+    and shows which combinations have audio ready (vs. need on-demand synth).
+    """
+    _ensure_session(sid, ctx)
+    engines = (
+        ctx.tts_registry.known() if ctx.tts_registry else []
+    )
+    cached = ctx.store.list_audio_variants(sid, cid)
+    return JSONResponse({
+        "engines": engines,
+        "cached": [
+            {"engine": e, "filtered": f} for (e, f) in cached
+        ],
+    })
+
+
+@router.get("/sessions/{sid}/chunks/{cid}/audio.variant")
+async def get_audio_variant(
+    sid: str,
+    cid: str,
+    engine: str = Query(...),
+    filtered: bool = Query(True),
+    ctx: AppContext = Depends(get_app_context),
+) -> StreamingResponse:
+    """Serve a specific (engine, filtered) audio variant for this chunk.
+
+    Synthesises on demand if not cached. The cumulative segment offsets
+    are sent via the `X-Segment-Offsets-Ms` header (JSON-encoded list[int])
+    so the player can drive the diff highlight against this variant's
+    timings — engines produce different segment durations.
+    """
+    _ensure_session(sid, ctx)
+    narration = ctx.store.get_narration(sid, cid)
+    if narration is None:
+        raise HTTPException(status_code=404, detail=f"Chunk {cid!r} narration not ready")
+
+    cached = ctx.store.get_audio_variant(sid, cid, engine, filtered)
+    if cached is not None:
+        audio, offsets = cached
+        return _audio_response(audio, offsets)
+
+    # Not cached — synth on demand, coalesced with any concurrent request
+    if ctx.tts_registry is None or engine not in ctx.tts_registry.known():
+        raise HTTPException(status_code=400, detail=f"Unknown engine: {engine!r}")
+
+    key = (sid, cid, engine, filtered)
+    if key not in _variant_inflight:
+        _variant_inflight[key] = asyncio.create_task(
+            _synth_variant(ctx, sid, cid, engine, filtered, narration.segments),
+            name=f"synth-variant-{engine}-{'f' if filtered else 'r'}-{cid}",
+        )
+
+    try:
+        await asyncio.wait_for(asyncio.shield(_variant_inflight[key]), timeout=_VARIANT_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise HTTPException(status_code=504, detail=f"Variant synth timed out for {engine}/{cid}")
+    finally:
+        # Drop completed/failed task from registry
+        if key in _variant_inflight and _variant_inflight[key].done():
+            del _variant_inflight[key]
+
+    again = ctx.store.get_audio_variant(sid, cid, engine, filtered)
+    if again is None:
+        raise HTTPException(status_code=500, detail="Variant synth completed without storing audio")
+    audio, offsets = again
+    return _audio_response(audio, offsets)
+
+
+async def _synth_variant(
+    ctx: AppContext,
+    sid: str,
+    cid: str,
+    engine: str,
+    filtered: bool,
+    segments,
+) -> None:
+    """Run TTS for one variant and persist the result + offsets."""
+    log.info("synth variant %s/%s/filtered=%s for %s", engine, cid, filtered, sid)
+    tts = ctx.tts_registry.get(engine)
+    texts = [tts_scrub(s.text) if filtered else s.text for s in segments]
+    audio, offsets = await synth_segments_to_wav(tts, texts)
+    ctx.store.save_audio_variant(sid, cid, engine, filtered, audio, offsets)
+
+
+def _audio_response(audio: bytes, offsets: list[int]) -> StreamingResponse:
+    return StreamingResponse(
+        _iter_bytes(audio),
+        media_type="audio/wav",
+        headers={
+            "Transfer-Encoding": "chunked",
+            "X-Segment-Offsets-Ms": json.dumps(offsets),
+            "Access-Control-Expose-Headers": "X-Segment-Offsets-Ms",
+        },
+    )
