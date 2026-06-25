@@ -9,7 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from typing import Any
 
-from contracts.schemas import CodeAnchor, Flag
+from contracts.schemas import CodeAnchor, Flag, Severity
 from pr_walkthrough.orchestration import AppContext
 
 from .deps import get_app_context
@@ -23,7 +23,7 @@ class CreateFlagBody(BaseModel):
 
     chunk_id: str
     anchor: CodeAnchor | None = None
-    severity: str
+    severity: Severity
     body: str
 
 
@@ -31,7 +31,7 @@ class PatchFlagBody(BaseModel):
     """PATCH body — any subset of editable Flag fields."""
 
     anchor: CodeAnchor | None = None
-    severity: str | None = None
+    severity: Severity | None = None
     body: str | None = None
 
 
@@ -46,7 +46,7 @@ async def create_flag(
         flag_id=f"flag_{uuid.uuid4().hex[:8]}",
         chunk_id=body.chunk_id,
         anchor=body.anchor,
-        severity=body.severity,  # type: ignore[arg-type]
+        severity=body.severity,
         body=body.body,
         posted=False,
         posted_url=None,

@@ -23,9 +23,12 @@ router = APIRouter()
 _LONG_POLL_TIMEOUT = 30.0  # seconds
 _POLL_INTERVAL = 0.2
 
-# Per (session_id, chunk_id) — coalesces concurrent requests so we don't
-# fire a duplicate narration task per long-poll tick.
-_inflight: set[tuple[str, str]] = set()
+# Per (session_id, chunk_id) → in-flight narration task. Tracking the
+# task (not just a set membership flag) lets `/regenerate` cancel a
+# still-running narration before it writes stale narration over the
+# freshly-kicked one. Without that, the older task could land last and
+# silently revert the regenerate to pre-regenerate content.
+_inflight: dict[tuple[str, str], asyncio.Task] = {}
 
 
 @router.get("/sessions/{sid}/chunks/{cid}", response_model=ChunkNarration)
@@ -61,15 +64,22 @@ def _maybe_kick_off_narration(ctx: AppContext, plan, sid: str, cid: str) -> None
     chunk = next((c for c in plan.chunks if c.chunk_id == cid), None)
     if chunk is None:
         return
-    _inflight.add(key)
 
     async def _run():
         try:
             await process_chunk(ctx, plan, chunk, sid)
+        except asyncio.CancelledError:
+            log.info("narration cancelled for %s/%s", sid, cid)
+            raise
         finally:
-            _inflight.discard(key)
+            # Only drop the entry if it still points at this task — if a
+            # regenerate replaced us, leave the new task's entry alone.
+            current = _inflight.get(key)
+            if current is asyncio.current_task():
+                _inflight.pop(key, None)
 
-    asyncio.create_task(_run(), name=f"on-demand-narrate-{sid}-{cid}")
+    task = asyncio.create_task(_run(), name=f"narrate-{sid}-{cid}")
+    _inflight[key] = task
 
 
 @router.get("/sessions/{sid}/files")
@@ -162,8 +172,17 @@ async def regenerate_chunk(
     if chunk is None:
         raise HTTPException(status_code=404, detail=f"Chunk {cid!r} not in plan")
     ctx.store.delete_chunk_cache(sid, cid)
-    # If a previous narration task is in flight, clear it so the kicker re-fires
-    _inflight.discard((sid, cid))
+    # Cancel any in-flight narration task for this chunk before kicking the
+    # new one. Otherwise the old task can finish *after* the new task and
+    # silently overwrite the regenerated narration with stale content.
+    key = (sid, cid)
+    prev = _inflight.pop(key, None)
+    if prev is not None and not prev.done():
+        prev.cancel()
+        try:
+            await prev
+        except (asyncio.CancelledError, Exception):
+            pass
     _maybe_kick_off_narration(ctx, state.plan, sid, cid)
     return JSONResponse({"status": "regenerating", "chunk_id": cid})
 

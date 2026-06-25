@@ -38,10 +38,13 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     return SPEEDS.includes(raw as (typeof SPEEDS)[number]) ? raw : 1;
   });
 
-  // Append narrationGen as a cache-bust so the audio element re-fetches
-  // after a regenerate (same URL otherwise → browser plays stale bytes).
+  // Append this chunk's gen counter as a cache-bust so the audio element
+  // re-fetches after a regenerate (same URL otherwise → browser plays stale
+  // bytes). Keyed per chunk so regenerating c1 doesn't invalidate c2's
+  // already-cached audio blob in the browser.
+  const chunkGen = narrationGen[chunk.chunk_id] ?? 0;
   const audioUrl = session
-    ? `${getAudioUrl(session.plan.session_id, chunk.chunk_id)}?v=${narrationGen}`
+    ? `${getAudioUrl(session.plan.session_id, chunk.chunk_id)}?v=${chunkGen}`
     : null;
 
   const handleRegenerate = async () => {
@@ -172,6 +175,12 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
               key={i}
               className={`${styles.segment} ${i === activeSegment ? styles.segmentActive : ""} ${seg.anchor ? styles.segmentAnchored : ""}`}
               onClick={() => jumpToSegment(i)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  jumpToSegment(i);
+                }
+              }}
               role="button"
               tabIndex={0}
               title={seg.anchor ? `Jump to ${seg.anchor.file}:${seg.anchor.line_range[0]}` : "Jump to this segment"}

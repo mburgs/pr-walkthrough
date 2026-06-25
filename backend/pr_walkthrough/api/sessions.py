@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -10,8 +9,8 @@ from pydantic import BaseModel
 
 from contracts.schemas import SessionState, TourPlan
 from pr_walkthrough.orchestration import AppContext
-from pr_walkthrough.orchestration.chunk_worker import process_chunk
 
+from .chunks import _maybe_kick_off_narration
 from .deps import get_app_context
 
 log = logging.getLogger(__name__)
@@ -41,17 +40,12 @@ async def create_session(
 
     ctx.store.create_session(plan)
 
-    # Kick off background narration for chunk 1 (and prefetch chunk 2)
-    if plan.chunks:
-        asyncio.create_task(
-            process_chunk(ctx, plan, plan.chunks[0], plan.session_id),
-            name=f"narrate-{plan.session_id}-{plan.chunks[0].chunk_id}",
-        )
-    if len(plan.chunks) > 1:
-        asyncio.create_task(
-            process_chunk(ctx, plan, plan.chunks[1], plan.session_id),
-            name=f"narrate-{plan.session_id}-{plan.chunks[1].chunk_id}",
-        )
+    # Kick off background narration for chunk 1 (and prefetch chunk 2).
+    # Routed through the same coalescing kicker that the long-poll endpoint
+    # uses, so a later `GET /chunks/c1` doesn't fire a *second* task for the
+    # same chunk while the prefetch is still in flight.
+    for chunk in plan.chunks[:2]:
+        _maybe_kick_off_narration(ctx, plan, plan.session_id, chunk.chunk_id)
 
     return plan
 

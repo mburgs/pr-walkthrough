@@ -22,9 +22,10 @@ interface SessionContextValue {
    * a busting key callers can append to URLs (e.g. audio src) so the browser
    * doesn't reuse a stale resource. */
   regenerateCurrentChunk: () => Promise<void>;
-  /** Monotonic per-chunk gen — appended to audio src so the browser
-   * doesn't replay cached bytes from before a regenerate. */
-  narrationGen: number;
+  /** Per-chunk monotonic generation counter — appended to audio src so the
+   * browser doesn't replay cached bytes from before a regenerate. Keyed by
+   * chunk_id so regenerating c1 doesn't also bust c2's cached audio. */
+  narrationGen: Record<string, number>;
 }
 
 const SessionContext = createContext<SessionContextValue | null>(null);
@@ -37,9 +38,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [currentNarration, setCurrentNarration] = useState<ChunkNarration | null>(null);
   const [narrationLoading, setNarrationLoading] = useState(false);
   const [flags, setFlags] = useState<Flag[]>([]);
-  const [narrationGen, setNarrationGen] = useState(0);
+  const [narrationGen, setNarrationGen] = useState<Record<string, number>>({});
 
-  // Load narration whenever chunk changes
+  // Load narration whenever chunk changes, or this chunk's gen counter bumps.
+  // Watching the whole `narrationGen` map would refetch every chunk on any
+  // regenerate; pull the single per-chunk number into the dep list instead.
+  const currentGen = currentChunkId ? (narrationGen[currentChunkId] ?? 0) : 0;
   useEffect(() => {
     if (!session || !currentChunkId) return;
     let cancelled = false;
@@ -62,9 +66,23 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session, currentChunkId, narrationGen]);
+  }, [session, currentChunkId, currentGen]);
+
+  // Reset all session-scoped state. Used by initSession + resumeSession so
+  // we don't briefly show the previous session's narration/flags while the
+  // new session loads (worst case: identical chunk ids would mask the swap
+  // entirely since the chunk-id-keyed effect wouldn't fire).
+  const resetSessionState = useCallback(() => {
+    setSession(null);
+    setCurrentChunkId(null);
+    setCurrentNarration(null);
+    setNarrationLoading(false);
+    setFlags([]);
+    setNarrationGen({});
+  }, []);
 
   const initSession = useCallback(async (prUrl: string) => {
+    resetSessionState();
     setLoading(true);
     setError(null);
     try {
@@ -88,15 +106,19 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [resetSessionState]);
 
   const regenerateCurrentChunk = useCallback(async () => {
     if (!session || !currentChunkId) return;
     await api.regenerateChunk(session.plan.session_id, currentChunkId);
-    setNarrationGen((n) => n + 1);
+    setNarrationGen((prev) => ({
+      ...prev,
+      [currentChunkId]: (prev[currentChunkId] ?? 0) + 1,
+    }));
   }, [session, currentChunkId]);
 
   const resumeSession = useCallback(async (sid: string) => {
+    resetSessionState();
     setLoading(true);
     setError(null);
     try {
@@ -111,7 +133,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [resetSessionState]);
 
   const addFlag = useCallback(
     async (flag: Omit<Flag, "flag_id" | "posted" | "posted_url">) => {

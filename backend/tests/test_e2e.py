@@ -116,6 +116,18 @@ def test_create_flag(client: TestClient) -> None:
     assert flag["chunk_id"] == "c1"
 
 
+def test_create_flag_rejects_unknown_severity(client: TestClient) -> None:
+    """422 (not 500) for severities outside the Literal — FastAPI should
+    catch the bad enum at the body model rather than letting Flag construction
+    raise inside the handler."""
+    sid = _create_session(client)
+    resp = client.post(
+        f"/sessions/{sid}/flags",
+        json={"chunk_id": "c1", "severity": "urgent", "body": "nope"},
+    )
+    assert resp.status_code == 422
+
+
 def test_patch_flag(client: TestClient) -> None:
     sid = _create_session(client)
     flag = _create_flag(client, sid)
