@@ -78,36 +78,47 @@ async def get_chunk_audio(
     cid: str,
     ctx: AppContext = Depends(get_app_context),
 ) -> StreamingResponse:
-    """Stream the WAV audio for a chunk.  Falls back to live synth if not cached."""
+    """Stream the WAV audio for a chunk.
+
+    Long-polls until the chunk_worker finishes synthesising and writes
+    `audio_bytes` to the store. The chunk_worker streams adapter chunks
+    that aren't a single valid WAV (mix of headered + raw PCM), so we
+    can't safely stream them piecemeal to the browser — we wait until
+    the worker has merged + cached the final WAV, then serve that.
+    """
     _ensure_session(sid, ctx)
+    _maybe_kick_off_narration_for_audio(ctx, sid, cid)
 
-    # Try cache first
-    audio = ctx.store.get_chunk_audio(sid, cid)
-    if audio is not None:
-        return StreamingResponse(
-            _iter_bytes(audio),
-            media_type="audio/wav",
-            headers={"Transfer-Encoding": "chunked"},
-        )
+    # Long-poll for the cached final WAV
+    elapsed = 0.0
+    timeout = 120.0  # synth can take ~30-60s per chunk on kokoro
+    poll = 0.5
+    while elapsed < timeout:
+        audio = ctx.store.get_chunk_audio(sid, cid)
+        if audio is not None:
+            return StreamingResponse(
+                _iter_bytes(audio),
+                media_type="audio/wav",
+                headers={"Transfer-Encoding": "chunked"},
+            )
+        await asyncio.sleep(poll)
+        elapsed += poll
 
-    # Live synth from narration
-    narration = ctx.store.get_narration(sid, cid)
-    if narration is None:
-        raise HTTPException(status_code=404, detail=f"Chunk {cid!r} narration not ready")
+    raise HTTPException(status_code=504, detail=f"Audio for {cid!r} not ready within timeout")
 
-    async def _stream():
-        chunks: list[bytes] = []
-        async for wav_chunk in ctx.tts.synth(narration.narration):
-            chunks.append(wav_chunk)
-            yield wav_chunk
-        # Cache for next time
-        ctx.store.save_chunk_audio(sid, cid, b"".join(chunks))
 
-    return StreamingResponse(
-        _stream(),
-        media_type="audio/wav",
-        headers={"Transfer-Encoding": "chunked"},
-    )
+def _maybe_kick_off_narration_for_audio(ctx: AppContext, sid: str, cid: str) -> None:
+    """If the chunk hasn't been narrated yet, kick off the narration task.
+
+    Same coalescing logic as the narration endpoint — without this, hitting
+    /audio for a not-yet-narrated chunk would wait forever.
+    """
+    if ctx.store.get_chunk_audio(sid, cid) is not None:
+        return
+    state = ctx.store.get_session_state(sid)
+    if state is None:
+        return
+    _maybe_kick_off_narration(ctx, state.plan, sid, cid)
 
 
 def _ensure_session(sid: str, ctx: AppContext):
