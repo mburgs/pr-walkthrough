@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SessionProvider, useSession } from "./contexts/SessionContext";
 import SessionShell from "./components/SessionShell";
 import { exportTranscript } from "./lib/exportTranscript";
@@ -15,6 +15,22 @@ function AppContent() {
   const { session, loading, error, initSession, resumeSession } = useSession();
   const [regenConfirm, setRegenConfirm] = useState(false);
   const [booted, setBooted] = useState(false);
+  const regenTimerRef = useRef<number | null>(null);
+
+  // Clear regen-confirm + its timer whenever the session changes (regenerate
+  // succeeded, user navigated, etc.). Without this, a pending "Confirm?"
+  // state flashes back into the new session's header before the timer fires.
+  useEffect(() => {
+    setRegenConfirm(false);
+    if (regenTimerRef.current != null) {
+      window.clearTimeout(regenTimerRef.current);
+      regenTimerRef.current = null;
+    }
+  }, [session?.plan.session_id]);
+
+  useEffect(() => () => {
+    if (regenTimerRef.current != null) window.clearTimeout(regenTimerRef.current);
+  }, []);
 
   useEffect(() => {
     const { sid, prUrl } = readBootHints();
@@ -95,8 +111,16 @@ function AppContent() {
           onClick={() => {
             if (!regenConfirm) {
               setRegenConfirm(true);
-              window.setTimeout(() => setRegenConfirm(false), 3000);
+              if (regenTimerRef.current != null) window.clearTimeout(regenTimerRef.current);
+              regenTimerRef.current = window.setTimeout(() => {
+                setRegenConfirm(false);
+                regenTimerRef.current = null;
+              }, 3000);
               return;
+            }
+            if (regenTimerRef.current != null) {
+              window.clearTimeout(regenTimerRef.current);
+              regenTimerRef.current = null;
             }
             setRegenConfirm(false);
             initSession(session.plan.pr.url);

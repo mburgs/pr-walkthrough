@@ -76,7 +76,13 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         setCurrentChunkId(plan.chunks[0].chunk_id);
       }
       // Persist sid in URL hash so reloads land back in this session (M7).
-      window.location.hash = `session=${plan.session_id}`;
+      // Also drop the one-shot `?pr=` query, otherwise the address bar shows
+      // both — and if this session is ever evicted server-side, reloading
+      // would silently create a *new* session from the stale `?pr=` value.
+      const next = new URL(window.location.href);
+      next.searchParams.delete("pr");
+      next.hash = `session=${plan.session_id}`;
+      window.history.replaceState({}, "", next.toString());
     } catch (e) {
       setError(String(e));
     } finally {

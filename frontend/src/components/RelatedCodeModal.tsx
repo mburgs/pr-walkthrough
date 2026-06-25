@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { RelatedCode } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import { getRepoFile } from "../api/client";
@@ -23,11 +23,17 @@ export default function RelatedCodeModal({ related, onClose }: Props) {
   const closeBtnRef = useRef<HTMLButtonElement>(null);
   const targetLineRef = useRef<HTMLDivElement>(null);
 
+  // Keyboard close + focus management. Capture the element that opened the
+  // modal so keyboard users land back on the right row when it closes.
   useEffect(() => {
+    const previouslyFocused = document.activeElement as HTMLElement | null;
     const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
     window.addEventListener("keydown", onKey);
     closeBtnRef.current?.focus();
-    return () => window.removeEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      previouslyFocused?.focus?.();
+    };
   }, [onClose]);
 
   useEffect(() => {
@@ -37,19 +43,22 @@ export default function RelatedCodeModal({ related, onClose }: Props) {
     setError(null);
     getRepoFile(session.plan.session_id, related.anchor.file)
       .then(r => { if (!cancelled) setContent(r.content); })
-      .catch(e => { if (!cancelled) setError(String(e)); });
+      .catch(e => { if (!cancelled) setError(extractDetail(e)); });
     return () => { cancelled = true; };
   }, [session, related.anchor.file]);
 
-  // After content paints, scroll the highlighted region into view
+  const [startLine, endLine] = related.anchor.line_range;
+
+  // Scroll the target line into view both when the content arrives and when
+  // the user clicks a different related row pointing at the same file but
+  // different lines (content stays cached; only startLine moves).
   useEffect(() => {
     if (content && targetLineRef.current) {
       targetLineRef.current.scrollIntoView({ block: "center", behavior: "auto" });
     }
-  }, [content]);
+  }, [content, startLine]);
 
   const lang = languageFor(related.anchor.file);
-  const [startLine, endLine] = related.anchor.line_range;
 
   return (
     <div className={styles.backdrop} onMouseDown={onClose} role="presentation">
@@ -103,10 +112,14 @@ interface FileViewProps {
 }
 
 function FileView({ content, lang, startLine, endLine, targetLineRef }: FileViewProps) {
-  const lines = content.split("\n");
-  // Re-highlight each line individually — refractor's HAST is per-call, and
-  // carving a multi-line tree by offset is error-prone for so little upside.
-  const perLineHast = lines.map(l => (lang ? highlightSnippet(l || " ", lang) : null));
+  // Tokenize once per (content, lang), then index by line. Re-highlighting
+  // on every parent render (e.g. on scroll-driven re-renders) used to make
+  // 1000-line files visibly janky.
+  const { lines, perLineHast } = useMemo(() => {
+    const split = content.split("\n");
+    const hast = lang ? split.map(l => highlightSnippet(l || " ", lang)) : split.map(() => null);
+    return { lines: split, perLineHast: hast };
+  }, [content, lang]);
 
   return (
     <div className={styles.fileView}>
@@ -116,20 +129,35 @@ function FileView({ content, lang, startLine, endLine, targetLineRef }: FileView
           const isActive = lineNo >= startLine && lineNo <= endLine;
           const hast = perLineHast[i];
           return (
-            <Fragment key={i}>
-              <div
-                ref={lineNo === startLine ? targetLineRef : undefined}
-                className={`${styles.line} ${isActive ? styles.lineActive : ""}`}
-              >
-                <span className={styles.lineNumber}>{lineNo}</span>
-                <span className={styles.lineText}>
-                  {hast ? renderHast(hast) : line || " "}
-                </span>
-              </div>
-            </Fragment>
+            <div
+              key={i}
+              ref={lineNo === startLine ? targetLineRef : undefined}
+              className={`${styles.line} ${isActive ? styles.lineActive : ""}`}
+            >
+              <span className={styles.lineNumber}>{lineNo}</span>
+              <span className={styles.lineText}>
+                {hast ? renderHast(hast) : line || " "}
+              </span>
+            </div>
           );
         })}
       </pre>
     </div>
   );
+}
+
+/**
+ * The backend uses FastAPI's `{detail: "..."}` envelope for error responses.
+ * api/client.ts wraps the body inside `HTTP NNN: <body>` so the readable
+ * message gets buried. Pull it back out for the UI.
+ */
+function extractDetail(err: unknown): string {
+  const raw = String(err);
+  const m = raw.match(/HTTP \d+: (\{.*\})/);
+  if (!m) return raw;
+  try {
+    const parsed = JSON.parse(m[1]);
+    if (parsed && typeof parsed.detail === "string") return parsed.detail;
+  } catch { /* fall through */ }
+  return raw;
 }

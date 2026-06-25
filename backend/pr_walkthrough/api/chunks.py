@@ -91,13 +91,20 @@ async def get_repo_file(
     root = ctx.repo_root.resolve()
     target = (root / path).resolve()
     try:
-        target.relative_to(root)
+        rel = target.relative_to(root)
     except ValueError:
         raise HTTPException(status_code=400, detail="Path escapes repo root")
+    # Keep dotfiles + VCS metadata out of reach. The modal only ever
+    # needs source files; .git/.env/credentials should never be served.
+    if any(part.startswith(".") for part in rel.parts):
+        raise HTTPException(status_code=400, detail="Refusing to read dotfile path")
     if not target.exists() or not target.is_file():
         raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    # Cap at 1 MB so a stray giant file (lockfile, generated sql dump) can't
+    # OOM the server or freeze the modal trying to syntax-highlight it.
+    if target.stat().st_size > 1_000_000:
+        raise HTTPException(status_code=413, detail="File too large to preview")
     try:
-        # Guard against accidentally serving binary blobs
         text = target.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
         raise HTTPException(status_code=500, detail=str(exc))

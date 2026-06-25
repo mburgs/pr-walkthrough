@@ -179,8 +179,10 @@ class JediContextRetriever:
                 if len(identifiers_visited) > MAX_ANCHOR_IDENTIFIERS:
                     break
 
-                # Find the column where the identifier appears, ask Jedi there
-                col_match = re.search(re.escape(ident), line_str)
+                # Find the column where the identifier appears, ask Jedi there.
+                # Word-boundary match so `foo` doesn't accidentally land on `foobar`
+                # earlier in the line when `foo` itself appears further along.
+                col_match = re.search(rf"\b{re.escape(ident)}\b", line_str)
                 if not col_match:
                     continue
                 col = col_match.start() + 1  # mid-identifier; Jedi accepts any col within
@@ -207,10 +209,14 @@ class JediContextRetriever:
                     seen_keys.add(key)
                     snippet = _read_snippet(Path(d.module_path), d.line or 1)
                     relationship = "test" if _is_test_path(rel) else "definition"
+                    # Report the *definition line* itself as the range. The
+                    # snippet shows surrounding context, but the anchor should
+                    # point at the symbol so the modal highlights one row.
+                    def_line = d.line or 1
                     results.append(RelatedCode(
                         anchor=CodeAnchor(
                             file=rel_str,
-                            line_range=(d.line or 1, (d.line or 1) + snippet.count("\n")),
+                            line_range=(def_line, def_line),
                         ),
                         relationship=relationship,
                         snippet=snippet,
@@ -243,7 +249,7 @@ class JediContextRetriever:
                     results.append(RelatedCode(
                         anchor=CodeAnchor(
                             file=rel_str,
-                            line_range=(line, line + snippet.count("\n")),
+                            line_range=(line, line),
                         ),
                         relationship=relationship,
                         snippet=snippet,

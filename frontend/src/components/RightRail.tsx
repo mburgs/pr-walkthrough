@@ -136,7 +136,12 @@ export default function RightRail({
                 role="button"
                 tabIndex={0}
                 onClick={() => setOpenRelated(r)}
-                onKeyDown={(e) => { if (e.key === "Enter") setOpenRelated(r); }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setOpenRelated(r);
+                  }
+                }}
                 title="Click to expand"
               >
                 <div className={styles.rowHeader}>
@@ -354,7 +359,9 @@ function ClickableRow({
       onClick={interactive ? onClick : undefined}
       role={interactive ? "button" : undefined}
       tabIndex={interactive ? 0 : undefined}
-      onKeyDown={interactive ? (e) => { if (e.key === "Enter") onClick?.(); } : undefined}
+      onKeyDown={interactive ? (e) => {
+        if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onClick?.(); }
+      } : undefined}
       title={interactive ? "Click to highlight in diff" : undefined}
     >
       {children}

@@ -205,6 +205,24 @@ class TestRepoFile:
         resp = client.get("/sessions/sess_nope/files", params={"path": "anything.py"})
         assert resp.status_code == 404
 
+    def test_rejects_dotfile_paths(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
+        in_memory_ctx.repo_root = tmp_path
+        (tmp_path / ".git").mkdir()
+        (tmp_path / ".git" / "config").write_text("[user]\n", encoding="utf-8")
+        (tmp_path / ".env").write_text("SECRET=1\n", encoding="utf-8")
+        sid = _create_session(client)
+        for p in (".git/config", ".env"):
+            resp = client.get(f"/sessions/{sid}/files", params={"path": p})
+            assert resp.status_code == 400, p
+
+    def test_rejects_oversize_file(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
+        in_memory_ctx.repo_root = tmp_path
+        big = tmp_path / "huge.txt"
+        big.write_bytes(b"x" * 1_100_000)
+        sid = _create_session(client)
+        resp = client.get(f"/sessions/{sid}/files", params={"path": "huge.txt"})
+        assert resp.status_code == 413
+
 
 class TestRegenerate:
     def test_wipes_narration_and_audio_and_re_kicks_worker(
