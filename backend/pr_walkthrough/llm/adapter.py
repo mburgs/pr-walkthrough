@@ -239,8 +239,8 @@ NARRATE_CHUNK_TOOL = {
     "description": (
         "Emit the narration for one chunk as a guided walkthrough. The reviewer "
         "hears segments in order; each anchored segment makes the UI highlight "
-        "and scroll to those lines while it plays. Unanchored segments are "
-        "general commentary."
+        "and scroll to those lines while it plays. Segments ARE the highlights — "
+        "there is no separate highlights field."
     ),
     "input_schema": {
         "type": "object",
@@ -251,20 +251,19 @@ NARRATE_CHUNK_TOOL = {
                 "items": _NARRATION_SEGMENT_SCHEMA,
                 "minItems": 1,
                 "description": (
-                    "Ordered narration. Aim for ~3-8 segments per chunk. Most "
-                    "segments should be anchored to specific lines within the "
-                    "chunk's hunks; reserve unanchored segments for intros, "
-                    "transitions, or genuinely big-picture observations."
+                    "Ordered narration. Aim for 3-6 segments per chunk; most "
+                    "narrations need 3-4. Most segments should be anchored to "
+                    "specific lines within the chunk's hunks. Reserve unanchored "
+                    "segments for one orienting intro, transitions, or genuinely "
+                    "big-picture observations."
                 ),
             },
-            "highlights": {"type": "array", "items": _HIGHLIGHT_SCHEMA},
             "related_code": {"type": "array", "items": _RELATED_CODE_SCHEMA},
             "concerns": {"type": "array", "items": _CONCERN_SCHEMA},
             "look_closer_for": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
-            "chunk_id", "segments", "highlights", "related_code",
-            "concerns", "look_closer_for",
+            "chunk_id", "segments", "related_code", "concerns", "look_closer_for",
         ],
         "additionalProperties": False,
     },
@@ -633,6 +632,14 @@ class ClaudeLLMAdapter:
                     if isinstance(s, dict)
                 ),
             }
+        # Derive `highlights` from anchored segments — the segments ARE the
+        # highlights, the LLM no longer emits them separately.
+        if "highlights" not in raw and isinstance(raw.get("segments"), list):
+            raw["highlights"] = [
+                {"anchor": s["anchor"], "why": s.get("text", "").strip()}
+                for s in raw["segments"]
+                if isinstance(s, dict) and isinstance(s.get("anchor"), dict)
+            ]
         # Coerce malformed anchors anywhere in the payload
         _coerce_anchors(raw)
         try:

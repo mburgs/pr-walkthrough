@@ -198,41 +198,62 @@ CHUNK DIFF
 ANCHORABLE LINE RANGES (use these as `anchor.line_range` values)
 {anchor_hint}
 
-TASK
-----
-Produce a ChunkNarration for chunk_id="{chunk.chunk_id}".
+AUDIENCE & VOICE
+----------------
+You're talking to a staff engineer who can read the code themselves. You're \
+walking them through it the way you would on a screen-share: oriented, brisk, \
+in flow. They'll ask follow-ups if they want depth. Don't over-explain. \
+Don't editorialize design choices ("intentional", "deliberate", "the key \
+mechanism") — let `concerns` capture anything worth raising. Use first-person \
+plural ("we initialize", "we iterate", "we write") and present tense.
 
-segments: An ORDERED list of 3-8 narration segments that walks the reviewer \
-through this chunk as a guided tour. Each segment is 1-3 sentences of direct, \
-concrete spoken prose (TTS will read it aloud — write for the ear, no markdown).
+WRITE FOR THE EAR
+-----------------
+The narration is read aloud by TTS. The TTS engine is not great with:
 
-Each segment optionally carries an `anchor` — the file + line_range it is \
-talking about. When set, the UI will highlight and scroll to those lines while \
-the segment plays. Anchor rules:
+  - All-caps acronyms / constants: write the spoken form. \
+"RFC 5545" → "RFC fifty-five forty-five". "UID" → "U I D" or just \
+"unique ID" if the literal letters aren't meaningful. \
+"VEVENT" → "a calendar event". "TRANSP:OPAQUE" → \
+"the transparency to opaque". "X-WR-CALNAME" → "the calendar's display name".
+  - Slashes between words: don't use them. "free/busy" → "free or busy". \
+"input/output" → "input and output".
+  - File paths: refer to files by name or role, not by path. \
+"src/auth/session.py" → "the session module" or just "session.py". Never \
+read a slash-separated path aloud.
+  - Naked snake_case or camelCase identifiers: refer to them by their role \
+when possible ("the publisher", "the constructor"), or pronounce them \
+naturally ("_stable_uid" → "stable U I D helper").
 
-  - Use file paths and line numbers from the ANCHORABLE LINE RANGES above.
-  - line_range is [start, end] inclusive, both on the new (post-change) side.
-  - Keep anchors tight: ideally a single statement or contiguous block of \
-2-8 lines. Don't anchor a whole hunk unless you are literally summarising it.
-  - Omit `anchor` (leave it null) for: intros ("Let's start with…"), \
-transitions ("Now to the caller side…"), and genuine big-picture observations \
-that are not about specific lines.
-  - Aim for MOST segments to be anchored. A walkthrough that never moves \
-defeats the purpose.
+If a literal symbol name (a public API name, a function name the reviewer \
+will grep for) IS the point, keep it — but accept it will be spoken \
+character-by-character or awkwardly. Spell it out only when necessary.
 
-The first segment is usually an unanchored intro; later segments march through \
-the change in logical order, anchoring as they go.
+OUTPUT
+------
+segments: An ORDERED list of 3-6 narration segments. Most chunks need 3-4 \
+— don't pad to fill space. A segment is 1-3 short sentences. Together the \
+segments walk the change in the order it makes sense to read it (entry point \
+→ what it does → noteworthy callouts).
 
-highlights: 0-3 line ranges in the diff that deserve visual emphasis in the \
-side panel. Include only if genuinely important. This is separate from \
-segment anchors and does not need to overlap with them.
+Each segment optionally carries an `anchor` — the file + line_range it's \
+talking about. When set, the UI highlights and scrolls to those lines while \
+the segment plays. The segment IS the highlight; there is no separate \
+highlights list.
+
+  - line_range is [start, end] inclusive, on the new (post-change) side, \
+chosen from the ANCHORABLE LINE RANGES above.
+  - Keep anchors tight to what you're actually talking about (1-15 lines is \
+typical; whole hunks rarely).
+  - Omit `anchor` only for: a one-sentence orienting intro, a transition, or \
+a genuine cross-file observation. Most segments should be anchored.
 
 related_code: Include the provided related-code snippets if genuinely \
 relevant. Don't invent snippets — only use what was provided. Set relationship \
 to one of: definition, callsite, test, prior_version, sibling.
 
-concerns: 0-3 items. Only raise a concern if it is worth a PR comment. \
-Write suggested_question as ready-to-post PR comment wording.
+concerns: 0-3 items. Only raise a concern if it's worth a PR comment. \
+Write `suggested_question` as ready-to-post PR comment wording.
 
 look_closer_for: 0-3 short strings calling attention to subtle issues or \
 missing pieces (schema migrations, race conditions, missing tests, etc.).

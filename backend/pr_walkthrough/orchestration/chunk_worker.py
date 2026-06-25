@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 
 from contracts.schemas import CodeAnchor, TourChunk, TourPlan
 
@@ -11,6 +12,34 @@ from . import app_context as _ctx_module
 from .event_bus import publish
 
 log = logging.getLogger(__name__)
+
+
+_PATHY_TOKEN = re.compile(r"\S*[/.][/.\w-]*\S*")
+
+
+def _tts_scrub(text: str) -> str:
+    """Last-mile cleanup before handing a narration segment to TTS.
+
+    The prompt already asks the LLM to write spoken-style prose, but a
+    stray "free/busy" sometimes slips through and the local TTS reads "/"
+    badly. Replace single-slash word pairs like that with " or " — but
+    leave file paths alone (anything with a dot, or with 2+ slashes, is
+    treated as a path token).
+    """
+    def replace(match: re.Match[str]) -> str:
+        token = match.group(0)
+        # Path-like: any dot, or more than one slash → leave alone
+        if "." in token or token.count("/") != 1:
+            return token
+        a, b = token.split("/", 1)
+        # Only swap when both halves are plain word tokens (avoids URLs,
+        # weird punctuation, etc.).
+        if a and b and a.isalnum() and b.isalnum():
+            return f"{a} or {b}"
+        return token
+
+    # Walk every whitespace-separated token and rewrite where appropriate
+    return re.sub(r"\S+", replace, text)
 
 
 async def process_chunk(
@@ -68,7 +97,7 @@ async def process_chunk(
             cumulative_pcm_len = 0
             for seg in narration.segments:
                 seg_chunks: list[bytes] = []
-                async for c in ctx.tts.synth(seg.text):
+                async for c in ctx.tts.synth(_tts_scrub(seg.text)):
                     seg_chunks.append(c)
                 # extract PCM from each yielded chunk (mix of WAVs and raw PCM)
                 seg_pcm = b"".join(pcm_from_wav(c) for c in seg_chunks)
@@ -84,7 +113,7 @@ async def process_chunk(
             ctx.store.save_narration(session_id, narration)
         else:
             audio_chunks: list[bytes] = []
-            async for chunk_bytes in ctx.tts.synth(narration.narration):
+            async for chunk_bytes in ctx.tts.synth(_tts_scrub(narration.narration)):
                 audio_chunks.append(chunk_bytes)
             audio = merge_synth_chunks(audio_chunks)
 

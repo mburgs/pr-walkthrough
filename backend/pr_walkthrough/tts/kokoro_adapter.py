@@ -27,7 +27,11 @@ logger = logging.getLogger(__name__)
 # Kokoro native output rate
 _KOKORO_RATE = 24000
 
-_DEFAULT_VOICE = "af_heart"
+import os as _os
+# PR_WALKTHROUGH_KOKORO_VOICE overrides the default Kokoro voice (one of the
+# names in _KOKORO_VOICES below). Useful when one voice mispronounces tokens
+# you care about; some voices fare better than others on acronyms.
+_DEFAULT_VOICE = _os.environ.get("PR_WALKTHROUGH_KOKORO_VOICE", "af_heart")
 
 # All voices bundled with the kokoro package
 _KOKORO_VOICES = [
