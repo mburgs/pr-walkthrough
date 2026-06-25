@@ -16,7 +16,14 @@ const SPEEDS = [1, 1.25, 1.5, 1.75, 2] as const;
 const SPEED_STORAGE_KEY = "pr-walkthrough.playbackRate";
 
 export default function NarrationPlayer({ chunk, narration, loading, onSegmentChange }: Props) {
-  const { session } = useSession();
+  const { session, setCurrentChunkId } = useSession();
+
+  // "Next chunk" target (null if we're already on the last chunk)
+  const nextChunkId = (() => {
+    const chunks = session?.plan.chunks ?? [];
+    const idx = chunks.findIndex(c => c.chunk_id === chunk.chunk_id);
+    return idx >= 0 && idx + 1 < chunks.length ? chunks[idx + 1].chunk_id : null;
+  })();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -100,10 +107,7 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   };
 
   const handleSkip = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = audio.duration;
-    setPlaying(false);
+    if (nextChunkId) setCurrentChunkId(nextChunkId);
   };
 
   const handleEnded = () => setPlaying(false);
@@ -141,7 +145,12 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
           {playing ? "⏸ Pause" : "▶ Play"}
         </button>
         <button className={styles.btn} onClick={handleReplay} disabled={loading || !narration}>↺</button>
-        <button className={styles.btn} onClick={handleSkip} disabled={loading || !narration || !playing}>⏭</button>
+        <button
+          className={styles.btn}
+          onClick={handleSkip}
+          disabled={!nextChunkId}
+          title={nextChunkId ? `Next chunk (${nextChunkId})` : "Last chunk"}
+        >⏭</button>
         <button
           className={styles.speedBtn}
           onClick={cycleRate}
