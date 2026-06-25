@@ -54,27 +54,36 @@ class TTSRegistry:
 
 
 def build_default_registry() -> TTSRegistry:
-    """Wire up every engine we know about. Caller picks which to USE."""
+    """Wire up Kokoro as the only registered engine by default.
+
+    XTTS-v2 and F5-TTS adapters live alongside but are NOT auto-registered
+    — their imports alone pull in ~1-2GB of model code and torch state at
+    process start. Opt in with PR_WALKTHROUGH_TTS_ENGINES=kokoro,xtts,f5.
+    """
+    import os
+
     reg = TTSRegistry()
+    requested = os.environ.get("PR_WALKTHROUGH_TTS_ENGINES", "kokoro").split(",")
+    requested = [name.strip() for name in requested if name.strip()]
 
-    # Kokoro — class itself acts as factory
-    from .kokoro_adapter import KokoroTTSAdapter
-    reg.register("kokoro", KokoroTTSAdapter)
+    if "kokoro" in requested:
+        from .kokoro_adapter import KokoroTTSAdapter
+        reg.register("kokoro", KokoroTTSAdapter)
 
-    # XTTS-v2 — only if coqui-tts is installed
-    try:
-        from .xtts_adapter import XTTSAdapter
-        if XTTSAdapter.is_available():
-            reg.register("xtts", XTTSAdapter)
-    except Exception as exc:
-        logger.info("XTTS not registered: %s", exc)
+    if "xtts" in requested:
+        try:
+            from .xtts_adapter import XTTSAdapter
+            if XTTSAdapter.is_available():
+                reg.register("xtts", XTTSAdapter)
+        except Exception as exc:
+            logger.info("XTTS not registered: %s", exc)
 
-    # F5-TTS — only if f5-tts is installed
-    try:
-        from .f5_adapter import F5TTSAdapter
-        if F5TTSAdapter.is_available():
-            reg.register("f5", F5TTSAdapter)
-    except Exception as exc:
-        logger.info("F5-TTS not registered: %s", exc)
+    if "f5" in requested:
+        try:
+            from .f5_adapter import F5TTSAdapter
+            if F5TTSAdapter.is_available():
+                reg.register("f5", F5TTSAdapter)
+        except Exception as exc:
+            logger.info("F5-TTS not registered: %s", exc)
 
     return reg

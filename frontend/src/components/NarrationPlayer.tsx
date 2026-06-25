@@ -1,7 +1,7 @@
 import { useRef, useState, useEffect } from "react";
 import type { TourChunk, ChunkNarration } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
-import { fetchVariant, getAvailableEngines, getAudioUrl } from "../api/client";
+import { getAudioUrl } from "../api/client";
 import styles from "./NarrationPlayer.module.css";
 
 interface Props {
@@ -14,16 +14,6 @@ interface Props {
 
 const SPEEDS = [1, 1.25, 1.5, 1.75, 2] as const;
 const SPEED_STORAGE_KEY = "pr-walkthrough.playbackRate";
-const ENGINE_STORAGE_KEY = "pr-walkthrough.ttsEngine";
-const FILTER_STORAGE_KEY = "pr-walkthrough.ttsFiltered";
-
-const ENGINE_LABELS: Record<string, string> = {
-  kokoro: "Kokoro",
-  xtts: "XTTS-v2",
-  f5: "F5-TTS",
-  say: "macOS Say",
-  piper: "Piper",
-};
 
 export default function NarrationPlayer({ chunk, narration, loading, onSegmentChange }: Props) {
   const { session } = useSession();
@@ -36,81 +26,9 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     return SPEEDS.includes(raw as (typeof SPEEDS)[number]) ? raw : 1;
   });
 
-  // ----- Variant switchers -----
-  const [engines, setEngines] = useState<string[]>([]);
-  const [engine, setEngine] = useState<string>(
-    () => localStorage.getItem(ENGINE_STORAGE_KEY) || "kokoro"
-  );
-  const [filtered, setFiltered] = useState<boolean>(
-    () => localStorage.getItem(FILTER_STORAGE_KEY) !== "false"
-  );
-  // The audio src for the currently selected variant; null while loading.
-  const [variantUrl, setVariantUrl] = useState<string | null>(null);
-  const [variantOffsets, setVariantOffsets] = useState<number[]>([]);
-  const [variantLoading, setVariantLoading] = useState(false);
-
-  // Client-side cache so already-loaded variants switch instantly (no refetch,
-  // no blob recreate, no audio element reload). Keyed by `${chunk}/${engine}/${filtered}`.
-  const variantCache = useRef<Map<string, { blobUrl: string; offsetsMs: number[] }>>(new Map());
-  const variantKey = (cid: string, eng: string, filt: boolean) => `${cid}/${eng}/${filt}`;
-
-  // Discover which engines the backend can offer (once per chunk)
-  useEffect(() => {
-    if (!session) return;
-    let cancelled = false;
-    getAvailableEngines(session.plan.session_id, chunk.chunk_id)
-      .then(r => { if (!cancelled) setEngines(r.engines); })
-      .catch(() => { if (!cancelled) setEngines([]); });
-    return () => { cancelled = true; };
-  }, [session, chunk.chunk_id]);
-
-  // Load the requested variant whenever engine / filter / chunk changes.
-  // Cache hits switch instantly; misses kick off a fetch.
-  useEffect(() => {
-    if (!session || !narration) return;
-    let cancelled = false;
-
-    const key = variantKey(chunk.chunk_id, engine, filtered);
-    const cached = variantCache.current.get(key);
-    if (cached) {
-      setError(null);
-      setVariantLoading(false);
-      setVariantUrl(cached.blobUrl);
-      setVariantOffsets(cached.offsetsMs.length ? cached.offsetsMs : (narration.segment_offsets_ms ?? []));
-      return;
-    }
-
-    setVariantLoading(true);
-    setError(null);
-    // Keep the old src playing while we fetch the new one — feels less jarring
-    // than going silent. The audio element only resets when the src actually changes.
-
-    fetchVariant(session.plan.session_id, chunk.chunk_id, engine, filtered)
-      .then(v => {
-        if (cancelled) return;
-        if (!v) { setError(`Failed to load ${engine} (${filtered ? "filtered" : "raw"})`); return; }
-        variantCache.current.set(key, v);
-        setVariantUrl(v.blobUrl);
-        setVariantOffsets(v.offsetsMs.length ? v.offsetsMs : (narration.segment_offsets_ms ?? []));
-      })
-      .catch(e => { if (!cancelled) setError(String(e)); })
-      .finally(() => { if (!cancelled) setVariantLoading(false); });
-
-    return () => { cancelled = true; };
-  }, [session, narration, chunk.chunk_id, engine, filtered]);
-
-  // Free blob URLs when this player unmounts (e.g. switching chunks).
-  useEffect(() => {
-    const cache = variantCache.current;
-    return () => {
-      cache.forEach(v => URL.revokeObjectURL(v.blobUrl));
-      cache.clear();
-    };
-  }, [chunk.chunk_id]);
-
-  // Persist switcher choices
-  useEffect(() => { localStorage.setItem(ENGINE_STORAGE_KEY, engine); }, [engine]);
-  useEffect(() => { localStorage.setItem(FILTER_STORAGE_KEY, String(filtered)); }, [filtered]);
+  const audioUrl = session
+    ? getAudioUrl(session.plan.session_id, chunk.chunk_id)
+    : null;
 
   // Apply rate to the live audio element and persist
   useEffect(() => {
@@ -137,14 +55,15 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   // Notify parent of segment changes
   useEffect(() => { onSegmentChange?.(activeSegment); }, [activeSegment, onSegmentChange]);
 
-  // Drive activeSegment from audio.currentTime + variantOffsets
+  // Drive activeSegment from audio.currentTime + segment_offsets_ms
+  const offsets = narration?.segment_offsets_ms ?? [];
   const handleTimeUpdate = () => {
     const audio = audioRef.current;
-    if (!audio || variantOffsets.length === 0) return;
+    if (!audio || offsets.length === 0) return;
     const ms = audio.currentTime * 1000;
     let idx = -1;
-    for (let i = 0; i < variantOffsets.length; i++) {
-      if (variantOffsets[i] <= ms) idx = i;
+    for (let i = 0; i < offsets.length; i++) {
+      if (offsets[i] <= ms) idx = i;
       else break;
     }
     if (idx !== activeSegment) setActiveSegment(idx);
@@ -153,7 +72,7 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   const jumpToSegment = (i: number) => {
     const audio = audioRef.current;
     if (!audio) return;
-    const t = variantOffsets[i];
+    const t = offsets[i];
     if (t === undefined) return;
     audio.currentTime = t / 1000;
     setActiveSegment(i);
@@ -188,9 +107,6 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   const handleEnded = () => setPlaying(false);
   const handleError = () => { setError("Audio failed to load"); setPlaying(false); };
 
-  // Fallback to the legacy default-variant URL while no audio.variant has loaded
-  const playableSrc = variantUrl ?? (session ? getAudioUrl(session.plan.session_id, chunk.chunk_id) : null);
-
   return (
     <div className={styles.player}>
       {loading && (
@@ -219,10 +135,10 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
       ) : null}
 
       <div className={styles.controls}>
-        <button className={`${styles.btn} ${styles.playBtn}`} onClick={handlePlay} disabled={loading || !narration || variantLoading}>
-          {variantLoading ? "…" : playing ? "⏸ Pause" : "▶ Play"}
+        <button className={`${styles.btn} ${styles.playBtn}`} onClick={handlePlay} disabled={loading || !narration}>
+          {playing ? "⏸ Pause" : "▶ Play"}
         </button>
-        <button className={styles.btn} onClick={handleReplay} disabled={loading || !narration || variantLoading}>↺</button>
+        <button className={styles.btn} onClick={handleReplay} disabled={loading || !narration}>↺</button>
         <button className={styles.btn} onClick={handleSkip} disabled={loading || !narration || !playing}>⏭</button>
         <button
           className={styles.speedBtn}
@@ -230,35 +146,14 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
           title="Playback speed"
           aria-label={`Playback speed ${rate}×`}
         >{rate}×</button>
-
-        {/* Variant switchers */}
-        <div className={styles.variantBar}>
-          <select
-            className={styles.select}
-            value={engine}
-            onChange={e => setEngine(e.target.value)}
-            disabled={engines.length === 0}
-            title="TTS engine"
-          >
-            {(engines.length ? engines : [engine]).map(e => (
-              <option key={e} value={e}>{ENGINE_LABELS[e] ?? e}</option>
-            ))}
-          </select>
-          <button
-            className={styles.filterBtn}
-            onClick={() => setFiltered(v => !v)}
-            title="Filtered: TTS-friendly text scrubbing (slashes, backticks). Raw: original."
-          >{filtered ? "filtered" : "raw"}</button>
-        </div>
-
         {error && <span className={styles.errorNote}>{error}</span>}
         <span className={styles.chunkLabel}>{chunk.chunk_id}</span>
       </div>
 
-      {playableSrc && (
+      {audioUrl && (
         <audio
           ref={audioRef}
-          src={playableSrc}
+          src={audioUrl}
           onEnded={handleEnded}
           onError={handleError}
           onTimeUpdate={handleTimeUpdate}
