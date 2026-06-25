@@ -128,7 +128,7 @@ async def _iter_bytes(data: bytes, chunk_size: int = 65536):
 # variant requests so we synth each combo at most once.
 _variant_inflight: dict[tuple[str, str, str, bool], asyncio.Task] = {}
 
-_VARIANT_TIMEOUT = 180.0  # XTTS / F5 first-call cold start can be slow
+_VARIANT_TIMEOUT = 900.0  # First-time XTTS download is ~2GB; F5 is ~1GB
 _VARIANT_POLL = 0.5
 
 
