@@ -29,6 +29,7 @@ class AppContext:
         pr_source: PRSource | None = None,
         context_retriever: ContextRetriever | None = None,
         store: SessionStore | None = None,
+        tts_registry: object | None = None,
         db_path: str | Path = "sessions.db",
         repo_root: Path = Path("."),
     ) -> None:
@@ -98,9 +99,14 @@ class AppContext:
         self.repo_root: Path = Path(repo_root)
 
         # Multi-engine registry for the audio-variants A/B endpoint. Lazy:
-        # engines are instantiated on first request, not at startup.
-        try:
-            from pr_walkthrough.tts.registry import build_default_registry
-            self.tts_registry = build_default_registry()
-        except Exception:
-            self.tts_registry = None  # tests with fakes don't need this
+        # engines are instantiated on first request, not at startup. Tests
+        # can inject their own registry (with fake engines) via the
+        # tts_registry kwarg.
+        if tts_registry is not None:
+            self.tts_registry = tts_registry
+        else:
+            try:
+                from pr_walkthrough.tts.registry import build_default_registry
+                self.tts_registry = build_default_registry()
+            except Exception:
+                self.tts_registry = None

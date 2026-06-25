@@ -43,5 +43,32 @@
   "look_closer_for": [
     "Schema migration for the new scope and rotated_at columns \u2014 does this PR include the migration, or is it expected separately?",
     "What happens to in-flight requests holding a now-deleted token \u2014 graceful 401, or stack trace?"
-  ]
+  ],
+  "segments": [
+    {
+      "text": "Alright, let's start in session.py because everything else in this PR builds on what changes here. The SessionStore class is gaining two new methods and modifying a third.",
+      "anchor": {
+        "file": "src/auth/session.py",
+        "line_range": [
+          44,
+          53
+        ]
+      }
+    },
+    {
+      "text": "First, create() now takes a scope parameter that defaults to 'default', so existing callers won't break, and it writes a rotated_at timestamp alongside created_at. Then the two new methods: rotate() deletes every session for a given user and returns the count, and touch() bumps the rotated_at on a single token.",
+      "anchor": {
+        "file": "src/auth/session.py",
+        "line_range": [
+          56,
+          62
+        ]
+      }
+    },
+    {
+      "text": "The rotate() method is the security primitive \u2014 that's what callers will use to invalidate sessions when something has changed about the user. One thing worth noting: rotate() does a hard DELETE rather than marking sessions as revoked.",
+      "anchor": null
+    }
+  ],
+  "segment_offsets_ms": []
 }

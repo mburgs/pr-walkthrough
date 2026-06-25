@@ -55,6 +55,29 @@ export const handlers = [
     return HttpResponse.redirect("/silent.wav");
   }),
 
+  // GET /sessions/:sid/chunks/:cid/audio/variants — engine list + cached combos
+  http.get("/sessions/:sid/chunks/:cid/audio/variants", () => {
+    return HttpResponse.json({ engines: ["kokoro"], cached: [{ engine: "kokoro", filtered: true }] });
+  }),
+
+  // GET /sessions/:sid/chunks/:cid/audio.variant — single variant audio
+  http.get("/sessions/:sid/chunks/:cid/audio.variant", async () => {
+    const r = await fetch("/silent.wav");
+    const blob = await r.blob();
+    return new HttpResponse(blob, {
+      headers: {
+        "Content-Type": "audio/wav",
+        "X-Segment-Offsets-Ms": JSON.stringify([0, 50]),
+        "Access-Control-Expose-Headers": "X-Segment-Offsets-Ms",
+      },
+    });
+  }),
+
+  // POST /sessions/:sid/chunks/:cid/regenerate — wipe + re-kick (MSW just acks)
+  http.post("/sessions/:sid/chunks/:cid/regenerate", ({ params }) => {
+    return HttpResponse.json({ status: "regenerating", chunk_id: params.cid });
+  }),
+
   // GET /sessions/:sid/follow-up/:aid/audio — answer audio (also silent)
   http.get("/sessions/:sid/follow-up/:aid/audio", () => {
     return HttpResponse.redirect("/silent.wav");

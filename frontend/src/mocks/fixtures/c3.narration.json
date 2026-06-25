@@ -30,5 +30,26 @@
   ],
   "look_closer_for": [
     "The tmp_db fixture \u2014 confirm it provides table isolation between tests so create() in one test doesn't leak into rotate() in another"
-  ]
+  ],
+  "segments": [
+    {
+      "text": "Last stop: the new test file. Four tests, covering the create path, rotate isolating between users, rotate returning zero, and touch updating the timestamp. The good news: the cross-user isolation test \u2014 creating sessions for users seven and eight, rotating seven, and asserting eight survives \u2014 is exactly the test I'd want.",
+      "anchor": {
+        "file": "tests/test_session.py",
+        "line_range": [
+          19,
+          29
+        ]
+      }
+    },
+    {
+      "text": "That's the regression you'd hate to miss. The gap I see: there's no test for the interaction in roles.py. We test that SessionStore.rotate() works, but not that update_role() actually calls it.",
+      "anchor": null
+    },
+    {
+      "text": "A bug where someone removes the rotate() call from roles.py would slip through this test suite. Also, the touch() test stops at calling touch \u2014 it doesn't assert that rotated_at actually changed. So we know it doesn't crash, but not that it does the thing.",
+      "anchor": null
+    }
+  ],
+  "segment_offsets_ms": []
 }

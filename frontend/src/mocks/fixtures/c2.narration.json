@@ -54,5 +54,26 @@
   "look_closer_for": [
     "Whether session_store and the role UPDATE share a database connection (atomicity)",
     "Other callers of update_role() that may need similar treatment but aren't in this PR"
-  ]
+  ],
+  "segments": [
+    {
+      "text": "Now to the first caller of the new API. In roles.py, the update_role function gets three new lines, sandwiched between the role UPDATE and the commit. The flow is: write the new role, rotate the user's sessions, log the count, then commit.",
+      "anchor": {
+        "file": "src/auth/roles.py",
+        "line_range": [
+          21,
+          23
+        ]
+      }
+    },
+    {
+      "text": "This is the security-meaningful part of the PR, and the ordering matters. Because the rotate and the role update are both in the same transaction, either both succeed or both roll back \u2014 that's good, we don't end up with an updated role and stale tokens. The piece I'd push on is what happens if rotate() returns zero.",
+      "anchor": null
+    },
+    {
+      "text": "The log line still prints, which is fine, but there's no signal upstream that a privilege change occurred without any sessions to rotate. That might be intentional, or it might mask a bug where the lookup ran against the wrong user_id. Worth asking.",
+      "anchor": null
+    }
+  ],
+  "segment_offsets_ms": []
 }

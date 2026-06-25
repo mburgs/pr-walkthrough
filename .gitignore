@@ -15,3 +15,7 @@ sessions.db-wal
 
 # Playwright MCP scratch (per-step DOM snapshots, console captures)
 .playwright-mcp/
+
+# Playwright
+test-results/
+playwright-report/
