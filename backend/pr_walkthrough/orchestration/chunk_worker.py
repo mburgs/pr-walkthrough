@@ -39,7 +39,11 @@ def _tts_scrub(text: str) -> str:
         return token
 
     # Walk every whitespace-separated token and rewrite where appropriate
-    return re.sub(r"\S+", replace, text)
+    text = re.sub(r"\S+", replace, text)
+    # Strip markdown backticks — the LLM sometimes wraps identifiers in them
+    # for the displayed transcript; TTS would otherwise say "backtick".
+    text = text.replace("`", "")
+    return text
 
 
 async def process_chunk(
