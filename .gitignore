@@ -12,3 +12,6 @@ build/
 sessions.db
 sessions.db-shm
 sessions.db-wal
+
+# Playwright MCP scratch (per-step DOM snapshots, console captures)
+.playwright-mcp/
