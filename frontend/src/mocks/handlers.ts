@@ -78,6 +78,18 @@ export const handlers = [
     return HttpResponse.json({ status: "regenerating", chunk_id: params.cid });
   }),
 
+  // GET /sessions/:sid/files?path= — full file contents for related-code modal
+  http.get("/sessions/:sid/files", ({ request }) => {
+    const url = new URL(request.url);
+    const path = url.searchParams.get("path") ?? "(unknown)";
+    // Stub: return a multi-line shaped sample so the modal renders meaningfully
+    // against fixture related-code anchors.
+    const content = Array.from({ length: 60 }, (_, i) =>
+      i === 11 ? `def example_${i + 1}():  # ← target` : `def example_${i + 1}():`
+    ).join("\n");
+    return HttpResponse.json({ path, content });
+  }),
+
   // GET /sessions/:sid/follow-up/:aid/audio — answer audio (also silent)
   http.get("/sessions/:sid/follow-up/:aid/audio", () => {
     return HttpResponse.redirect("/silent.wav");

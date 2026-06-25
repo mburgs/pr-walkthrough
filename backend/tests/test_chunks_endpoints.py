@@ -175,6 +175,37 @@ class TestAudioVariant:
 # ---------------------------------------------------------------------------
 
 
+class TestRepoFile:
+    """GET /sessions/{sid}/files?path= — full file contents for the related-code modal."""
+
+    def test_returns_file_contents(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
+        in_memory_ctx.repo_root = tmp_path
+        (tmp_path / "src").mkdir()
+        (tmp_path / "src" / "foo.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
+        sid = _create_session(client)
+        resp = client.get(f"/sessions/{sid}/files", params={"path": "src/foo.py"})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["path"] == "src/foo.py"
+        assert "def foo()" in body["content"]
+
+    def test_rejects_path_traversal(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
+        in_memory_ctx.repo_root = tmp_path
+        sid = _create_session(client)
+        resp = client.get(f"/sessions/{sid}/files", params={"path": "../etc/passwd"})
+        assert resp.status_code == 400
+
+    def test_404_on_missing_file(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
+        in_memory_ctx.repo_root = tmp_path
+        sid = _create_session(client)
+        resp = client.get(f"/sessions/{sid}/files", params={"path": "nope.py"})
+        assert resp.status_code == 404
+
+    def test_404_on_unknown_session(self, client: TestClient) -> None:
+        resp = client.get("/sessions/sess_nope/files", params={"path": "anything.py"})
+        assert resp.status_code == 404
+
+
 class TestRegenerate:
     def test_wipes_narration_and_audio_and_re_kicks_worker(
         self, client: TestClient, in_memory_ctx

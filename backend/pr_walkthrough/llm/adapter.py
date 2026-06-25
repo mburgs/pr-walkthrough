@@ -148,11 +148,28 @@ _LEAN_TOUR_CHUNK_SCHEMA = {
             "type": "array",
             "items": {"type": "integer"},
             "minItems": 1,
-            "description": "0-based indices into the FULL DIFF list from the prompt",
+            "description": (
+                "0-based indices into the FULL DIFF list from the prompt. "
+                "A hunk MAY appear in more than one chunk if it provides "
+                "essential context for each. Splitting a single file's hunks "
+                "across multiple chunks is encouraged when they serve "
+                "different narrative roles."
+            ),
         },
         "summary": {"type": "string"},
         "rationale_for_position": {"type": "string"},
         "est_concern_level": {"type": "string", "enum": ["low", "medium", "high"]},
+        "group": {
+            "type": ["string", "null"],
+            "description": (
+                "Short label (2-4 words) for chunks that share a narrative "
+                "purpose — adjacent chunks with the same group are rendered "
+                "under a single divider. Examples: 'API surface', "
+                "'Mechanism', 'Wiring', 'Tests', 'Config'. Use null when no "
+                "useful grouping applies, or when the PR is small enough that "
+                "groups would add noise."
+            ),
+        },
     },
     "required": [
         "chunk_id",
@@ -365,6 +382,7 @@ class ClaudeLLMAdapter:
                     summary=lc["summary"],
                     rationale_for_position=lc["rationale_for_position"],
                     est_concern_level=lc["est_concern_level"],
+                    group=lc.get("group") or None,
                 ))
             except (KeyError, ValidationError) as e:
                 raise ValueError(
@@ -417,7 +435,8 @@ class ClaudeLLMAdapter:
         )
 
         raw = self._extract_tool_input(response, "emit_chunk_narration")
-        return self._parse_chunk_narration(raw)
+        result = self._parse_chunk_narration(raw)
+        return _snap_anchors_to_chunk_hunks(result, chunk)
 
     # ------------------------------------------------------------------
     # narrate_chunk_streaming
@@ -639,6 +658,64 @@ class ClaudeLLMAdapter:
 # ---------------------------------------------------------------------------
 # Streaming helpers
 # ---------------------------------------------------------------------------
+
+def _snap_anchors_to_chunk_hunks(
+    narration: ChunkNarration, chunk: TourChunk
+) -> ChunkNarration:
+    """Validate each segment anchor and snap drift to the nearest real hunk range.
+
+    The line-numbered prompt makes anchors land correctly most of the time, but
+    the model still occasionally emits a range that's slightly off (a stray
+    off-by-one or a range that pokes outside the actual hunk). For each segment
+    anchor we check:
+
+      1. Does the file appear in *this* chunk's hunks? If not, drop the anchor
+         — the model picked a file that doesn't belong to this chunk.
+      2. Does the line range overlap any hunk's new-side range? If yes, leave
+         it alone.
+      3. If not, snap to the nearest hunk (by absolute distance from the
+         anchor's start line). This catches the common "anchored 2 lines
+         above the hunk" case without changing the intent.
+
+    Concern anchors get the same treatment.
+    """
+    # Build {file: [(start, end), ...]} for this chunk's hunks (new-side)
+    hunk_ranges: dict[str, list[tuple[int, int]]] = {}
+    for h in chunk.hunks:
+        start = h.new_range[0]
+        end = h.new_range[0] + max(h.new_range[1] - 1, 0)
+        hunk_ranges.setdefault(h.file, []).append((start, end))
+
+    def snap(anchor: CodeAnchor | None) -> CodeAnchor | None:
+        if anchor is None:
+            return None
+        ranges = hunk_ranges.get(anchor.file)
+        if not ranges:
+            # File isn't in this chunk — drop the anchor rather than mislead the UI
+            return None
+        a_start, a_end = anchor.line_range
+        # Already overlaps a real hunk? Leave alone.
+        if any(rs <= a_end and re >= a_start for rs, re in ranges):
+            return anchor
+        # Snap to the hunk whose range is nearest the anchor's start
+        nearest = min(ranges, key=lambda r: min(abs(r[0] - a_start), abs(r[1] - a_start)))
+        # Preserve the relative span of the anchor but clamp inside the hunk
+        span = max(0, a_end - a_start)
+        new_start = max(nearest[0], min(nearest[1], a_start))
+        new_end = min(nearest[1], new_start + span)
+        return CodeAnchor(file=anchor.file, line_range=(new_start, new_end))
+
+    new_segments = [
+        s.model_copy(update={"anchor": snap(s.anchor)}) for s in narration.segments
+    ]
+    new_concerns = [
+        c.model_copy(update={"anchor": snap(c.anchor)}) for c in narration.concerns
+    ]
+    return narration.model_copy(update={
+        "segments": new_segments,
+        "concerns": new_concerns,
+    })
+
 
 def _coerce_anchors(node: Any) -> None:
     """Walk a dict/list tree and fix anchor.line_range shape quirks in place.

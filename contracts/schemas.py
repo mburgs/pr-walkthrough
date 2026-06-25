@@ -65,6 +65,14 @@ class TourChunk(BaseModel):
         description="Why this chunk appears at this position in the tour",
     )
     est_concern_level: Severity
+    group: str | None = Field(
+        None,
+        description=(
+            "Optional short label grouping this chunk with neighbours that "
+            "serve the same narrative purpose (e.g. 'API surface', "
+            "'Mechanism', 'Tests'). Rendered as a divider in the sidebar."
+        ),
+    )
 
 
 class TourPlan(BaseModel):

@@ -8,6 +8,8 @@ import type {
 } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import NarrationPlayer from "./NarrationPlayer";
+import RelatedCodeModal from "./RelatedCodeModal";
+import type { RelatedCode } from "../contracts";
 import { highlightSnippet, languageFor, renderHast } from "../lib/highlight";
 import styles from "./RightRail.module.css";
 
@@ -46,6 +48,7 @@ export default function RightRail({
   activeAnchor,
 }: Props) {
   const { flags } = useSession();
+  const [openRelated, setOpenRelated] = useState<RelatedCode | null>(null);
 
   const sectionCounts = useMemo(() => ({
     concerns:   narration?.concerns.length ?? 0,
@@ -127,7 +130,15 @@ export default function RightRail({
             const lang = languageFor(r.anchor.file);
             const hast = highlightSnippet(r.snippet, lang);
             return (
-              <div key={i} className={styles.row}>
+              <div
+                key={i}
+                className={`${styles.row} ${styles.clickable}`}
+                role="button"
+                tabIndex={0}
+                onClick={() => setOpenRelated(r)}
+                onKeyDown={(e) => { if (e.key === "Enter") setOpenRelated(r); }}
+                title="Click to expand"
+              >
                 <div className={styles.rowHeader}>
                   <span className={styles.relationship}>{r.relationship}</span>
                   <Anchor file={r.anchor.file} line={r.anchor.line_range} />
@@ -163,6 +174,12 @@ export default function RightRail({
           )}
         </Section>
       </div>
+      {openRelated && (
+        <RelatedCodeModal
+          related={openRelated}
+          onClose={() => setOpenRelated(null)}
+        />
+      )}
     </div>
   );
 }

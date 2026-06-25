@@ -102,9 +102,22 @@ FULL DIFF ({len(diff)} hunks across {len({h.file for h in diff})} files)
 TASK
 ----
 Return an ordered list of chunks that walks the reviewer through this change \
-in the order that makes the most architectural sense. Lead with the core \
-mechanism everything else depends on. Group related hunks into the same chunk \
-when they form a single logical unit.
+the way a knowledgeable peer would on a screen-share. Order by narrative \
+altitude — entry point or core mechanism first, then callers / wiring, then \
+tests, then config or housekeeping. NOT by file order.
+
+TOUR SHAPE
+----------
+- Splitting a single file's hunks across multiple chunks is encouraged when \
+  the parts serve different roles in the walkthrough (e.g. a file's public \
+  API surface shown early; its internals shown later near the callers).
+- The same hunk MAY appear in more than one chunk if it provides essential \
+  context for each. Use this sparingly — only when the cross-reference \
+  actually serves the reviewer.
+- For larger PRs, give adjacent chunks a shared `group` label so the sidebar \
+  shows a section divider. Typical groups: 'API surface', 'Mechanism', \
+  'Wiring', 'Tests', 'Config'. Pick whatever fits this PR. Small PRs (< 4 \
+  chunks) usually don't need groups — leave `group: null`.
 
 For each chunk, emit:
 - chunk_id: "c1", "c2", … (sequential, no gaps)
@@ -113,9 +126,10 @@ For each chunk, emit:
 - summary: one tight sentence shown in the chunk list UI
 - rationale_for_position: one sentence explaining why this chunk appears here
 - est_concern_level: "low" | "medium" | "high"
+- group: short label (2-4 words) or null
 
-Every hunk from the diff above should appear in exactly one chunk. Index range \
-is 0 to {len(diff) - 1}.
+Every hunk from the diff above should appear in AT LEAST one chunk. Index \
+range is 0 to {len(diff) - 1}.
 """
 
 
@@ -124,11 +138,32 @@ is 0 to {len(diff) - 1}.
 # ---------------------------------------------------------------------------
 
 def format_hunk_for_narration(hunk: Hunk) -> str:
-    """Render one Hunk for the narration context block."""
-    return (
-        f"### {hunk.file}  {hunk.header}\n"
-        f"{hunk.body}"
-    )
+    """Render one Hunk for the narration context block.
+
+    Prefixes each diff line with `L<new-side line number>` so the LLM picks
+    line numbers it has literally seen rather than computing them by
+    arithmetic — historically the source of off-by-N anchor mistakes.
+
+    - "+" and " " (context) lines get the new-side number.
+    - "-" lines get `L----` — the deleted text has no new-side line, and
+      anchors only live on the new side anyway, so they're not pickable.
+    """
+    lines = [f"### {hunk.file}  {hunk.header}"]
+    new_line = hunk.new_range[0] or 1
+    for raw in hunk.body.splitlines():
+        if not raw:
+            lines.append(raw)
+            continue
+        marker = raw[0]
+        if marker == "+":
+            lines.append(f"L{new_line:>4}  {raw}")
+            new_line += 1
+        elif marker == "-":
+            lines.append(f"L----  {raw}")
+        else:  # space / context
+            lines.append(f"L{new_line:>4}  {raw}")
+            new_line += 1
+    return "\n".join(lines)
 
 
 def build_narrate_chunk_system_addendum(plan: TourPlan, diff_context: str) -> str:
@@ -197,6 +232,11 @@ CHUNK DIFF
 
 ANCHORABLE LINE RANGES (use these as `anchor.line_range` values)
 {anchor_hint}
+
+Each line in the CHUNK DIFF above is prefixed with `L<nnn>` for added \
+or unchanged lines. Use those numbers exactly when you anchor — copy them, \
+don't compute them. Lines prefixed `L----` are deletions and can't be \
+anchored to (anchors live on the new side).
 
 AUDIENCE & VOICE
 ----------------

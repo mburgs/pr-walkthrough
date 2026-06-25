@@ -150,14 +150,6 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     }
   };
 
-  const handleReplay = () => {
-    const audio = audioRef.current;
-    if (!audio) return;
-    audio.currentTime = 0;
-    audio.play().catch((e) => setError(String(e)));
-    setPlaying(true);
-  };
-
   const handleSkip = () => {
     if (nextChunkId) setCurrentChunkId(nextChunkId);
   };
@@ -225,7 +217,6 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
             </div>
           )}
         </div>
-        <button className={styles.btn} onClick={handleReplay} disabled={loading || !narration}>↺</button>
         <button
           className={styles.btn}
           onClick={handleSkip}

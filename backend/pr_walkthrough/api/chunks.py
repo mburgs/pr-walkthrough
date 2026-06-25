@@ -72,6 +72,38 @@ def _maybe_kick_off_narration(ctx: AppContext, plan, sid: str, cid: str) -> None
     asyncio.create_task(_run(), name=f"on-demand-narrate-{sid}-{cid}")
 
 
+@router.get("/sessions/{sid}/files")
+async def get_repo_file(
+    sid: str,
+    path: str,
+    ctx: AppContext = Depends(get_app_context),
+) -> JSONResponse:
+    """Read a file from the session's `repo_root`.
+
+    Used by the click-to-expand modal in the Related-code section, which
+    needs to render the full containing file (with the relevant lines
+    spotlighted) rather than only the snippet the retriever extracted.
+
+    Path is resolved relative to the configured repo_root and must stay
+    inside it — straightforward path-traversal guard.
+    """
+    _ensure_session(sid, ctx)
+    root = ctx.repo_root.resolve()
+    target = (root / path).resolve()
+    try:
+        target.relative_to(root)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Path escapes repo root")
+    if not target.exists() or not target.is_file():
+        raise HTTPException(status_code=404, detail=f"Not found: {path}")
+    try:
+        # Guard against accidentally serving binary blobs
+        text = target.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return JSONResponse({"path": path, "content": text})
+
+
 @router.get("/sessions/{sid}/chunks/{cid}/audio")
 async def get_chunk_audio(
     sid: str,

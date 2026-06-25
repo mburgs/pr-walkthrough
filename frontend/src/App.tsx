@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { SessionProvider, useSession } from "./contexts/SessionContext";
 import SessionShell from "./components/SessionShell";
 import { exportTranscript } from "./lib/exportTranscript";
@@ -15,6 +15,7 @@ function readBootHints(): { sid?: string; prUrl?: string } {
 
 function AppContent() {
   const { session, loading, error, initSession, resumeSession } = useSession();
+  const [regenConfirm, setRegenConfirm] = useState(false);
 
   useEffect(() => {
     const { sid, prUrl } = readBootHints();
@@ -69,6 +70,22 @@ function AppContent() {
           <span className={styles.prTitle}>{session.plan.pr.title}</span>
         </a>
         <span style={{ flex: 1 }} />
+        <button
+          className={styles.headerBtn}
+          onClick={() => {
+            if (!regenConfirm) {
+              setRegenConfirm(true);
+              window.setTimeout(() => setRegenConfirm(false), 3000);
+              return;
+            }
+            setRegenConfirm(false);
+            initSession(session.plan.pr.url);
+          }}
+          aria-label="Regenerate session"
+          title="Fresh plan + narrations for this same PR (current session is discarded)"
+        >
+          {regenConfirm ? "↻ Confirm — discard?" : "↻ Regenerate"}
+        </button>
         <button
           className={styles.headerBtn}
           onClick={() => exportTranscript(session.plan.session_id, session.plan)}

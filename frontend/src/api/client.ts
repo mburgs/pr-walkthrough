@@ -44,6 +44,10 @@ export function regenerateChunk(sid: string, cid: string): Promise<{ status: str
   return request(`/sessions/${sid}/chunks/${cid}/regenerate`, { method: "POST" });
 }
 
+export function getRepoFile(sid: string, path: string): Promise<{ path: string; content: string }> {
+  return request(`/sessions/${sid}/files?path=${encodeURIComponent(path)}`);
+}
+
 export function getAudioUrl(sid: string, cid: string): string {
   return `${BASE}/sessions/${sid}/chunks/${cid}/audio`;
 }

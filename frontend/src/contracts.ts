@@ -49,6 +49,8 @@ export interface TourChunk {
   summary: string;
   rationale_for_position: string;
   est_concern_level: Severity;
+  /** Optional short label grouping this chunk with its neighbours. */
+  group?: string | null;
 }
 
 export interface TourPlan {

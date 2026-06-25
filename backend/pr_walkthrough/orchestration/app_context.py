@@ -80,10 +80,10 @@ class AppContext:
                 pr_source = FakePRSource()
         if context_retriever is None:
             try:
-                from pr_walkthrough.context.retriever import (
-                    RipgrepContextRetriever,
+                from pr_walkthrough.context.jedi_retriever import (
+                    HybridContextRetriever,
                 )
-                context_retriever = RipgrepContextRetriever()
+                context_retriever = HybridContextRetriever()
             except Exception:
                 from pr_walkthrough.fakes import FakeContext
                 context_retriever = FakeContext()
