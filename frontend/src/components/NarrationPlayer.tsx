@@ -8,27 +8,78 @@ interface Props {
   chunk: TourChunk;
   narration: ChunkNarration | null;
   loading: boolean;
+  /** Notified whenever the playhead crosses into a different segment. -1 = none. */
+  onSegmentChange?: (segmentIndex: number) => void;
 }
 
-export default function NarrationPlayer({ chunk, narration, loading }: Props) {
+const SPEEDS = [1, 1.25, 1.5, 1.75, 2] as const;
+const SPEED_STORAGE_KEY = "pr-walkthrough.playbackRate";
+
+export default function NarrationPlayer({ chunk, narration, loading, onSegmentChange }: Props) {
   const { session } = useSession();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeSegment, setActiveSegment] = useState<number>(-1);
+  const [rate, setRate] = useState<number>(() => {
+    const raw = Number(localStorage.getItem(SPEED_STORAGE_KEY));
+    return SPEEDS.includes(raw as (typeof SPEEDS)[number]) ? raw : 1;
+  });
 
   const audioUrl = session
     ? getAudioUrl(session.plan.session_id, chunk.chunk_id)
     : null;
 
+  // Apply rate to the live audio element and persist
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.playbackRate = rate;
+    localStorage.setItem(SPEED_STORAGE_KEY, String(rate));
+  }, [rate]);
+
+  const cycleRate = () => {
+    const i = SPEEDS.indexOf(rate as (typeof SPEEDS)[number]);
+    setRate(SPEEDS[(i + 1) % SPEEDS.length]);
+  };
+
   // Reset state when chunk changes
   useEffect(() => {
     setPlaying(false);
     setError(null);
+    setActiveSegment(-1);
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
     }
   }, [chunk.chunk_id]);
+
+  // Notify parent of segment changes
+  useEffect(() => { onSegmentChange?.(activeSegment); }, [activeSegment, onSegmentChange]);
+
+  // Drive activeSegment from audio.currentTime + segment_offsets_ms
+  const offsets = narration?.segment_offsets_ms ?? [];
+  const handleTimeUpdate = () => {
+    const audio = audioRef.current;
+    if (!audio || offsets.length === 0) return;
+    const ms = audio.currentTime * 1000;
+    // Find the last offset <= ms (linear is fine; segments are small)
+    let idx = -1;
+    for (let i = 0; i < offsets.length; i++) {
+      if (offsets[i] <= ms) idx = i;
+      else break;
+    }
+    if (idx !== activeSegment) setActiveSegment(idx);
+  };
+
+  const jumpToSegment = (i: number) => {
+    const audio = audioRef.current;
+    if (!audio || !offsets[i] && offsets[i] !== 0) return;
+    audio.currentTime = offsets[i] / 1000;
+    setActiveSegment(i);
+    if (!playing) {
+      audio.play().catch((e) => setError(String(e)));
+      setPlaying(true);
+    }
+  };
 
   const handlePlay = () => {
     const audio = audioRef.current;
@@ -71,9 +122,24 @@ export default function NarrationPlayer({ chunk, narration, loading }: Props) {
           narrating…
         </div>
       )}
-      {!loading && narration && (
+      {!loading && narration && narration.segments.length > 0 ? (
+        <div className={styles.script}>
+          {narration.segments.map((seg, i) => (
+            <span
+              key={i}
+              className={`${styles.segment} ${i === activeSegment ? styles.segmentActive : ""} ${seg.anchor ? styles.segmentAnchored : ""}`}
+              onClick={() => jumpToSegment(i)}
+              role="button"
+              tabIndex={0}
+              title={seg.anchor ? `Jump to ${seg.anchor.file}:${seg.anchor.line_range[0]}` : "Jump to this segment"}
+            >
+              {seg.text}{" "}
+            </span>
+          ))}
+        </div>
+      ) : !loading && narration ? (
         <div className={styles.script}>{narration.narration}</div>
-      )}
+      ) : null}
 
       <div className={styles.controls}>
         <button className={`${styles.btn} ${styles.playBtn}`} onClick={handlePlay} disabled={loading || !narration}>
@@ -85,6 +151,14 @@ export default function NarrationPlayer({ chunk, narration, loading }: Props) {
         <button className={styles.btn} onClick={handleSkip} disabled={loading || !narration || !playing}>
           ⏭
         </button>
+        <button
+          className={styles.speedBtn}
+          onClick={cycleRate}
+          title="Playback speed (click to cycle)"
+          aria-label={`Playback speed ${rate}×`}
+        >
+          {rate}×
+        </button>
         {error && <span className={styles.errorNote}>{error}</span>}
         <span className={styles.chunkLabel}>{chunk.chunk_id}</span>
       </div>
@@ -95,6 +169,8 @@ export default function NarrationPlayer({ chunk, narration, loading }: Props) {
           src={audioUrl}
           onEnded={handleEnded}
           onError={handleError}
+          onTimeUpdate={handleTimeUpdate}
+          onSeeked={handleTimeUpdate}
           style={{ display: "none" }}
         />
       )}

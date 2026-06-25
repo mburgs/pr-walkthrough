@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useSession } from "../contexts/SessionContext";
 import ChunkList from "./ChunkList";
 import DiffViewer from "./DiffViewer";
@@ -10,11 +10,20 @@ export default function SessionShell() {
   const { session, currentChunkId, currentNarration, narrationLoading } = useSession();
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [activeSegment, setActiveSegment] = useState<number>(-1);
+
+  // Reset segment selection when chunk changes (player resets on its own too).
+  useEffect(() => { setActiveSegment(-1); }, [currentChunkId]);
 
   if (!session) return null;
 
   const currentChunk =
     session.plan.chunks.find((c) => c.chunk_id === currentChunkId) ?? null;
+
+  const activeAnchor =
+    activeSegment >= 0 && currentNarration?.segments?.[activeSegment]?.anchor
+      ? currentNarration.segments[activeSegment].anchor
+      : null;
 
   const shellClass = [
     styles.shell,
@@ -58,7 +67,7 @@ export default function SessionShell() {
       <main className={styles.center}>
         <div className={styles.diffArea}>
           {currentChunk ? (
-            <DiffViewer chunk={currentChunk} />
+            <DiffViewer chunk={currentChunk} activeAnchor={activeAnchor} />
           ) : (
             <div className={styles.emptyCenter}>Select a chunk to begin.</div>
           )}
@@ -72,6 +81,7 @@ export default function SessionShell() {
           narrationLoading={narrationLoading}
           collapsed={rightCollapsed}
           onToggle={() => setRightCollapsed((v) => !v)}
+          onSegmentChange={setActiveSegment}
         />
       </aside>
 

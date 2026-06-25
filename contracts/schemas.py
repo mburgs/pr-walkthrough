@@ -101,12 +101,51 @@ class Concern(BaseModel):
     anchor: CodeAnchor | None = None
 
 
+class NarrationSegment(BaseModel):
+    """One spoken segment of a chunk's narration.
+
+    Anchored segments tell the UI to highlight + scroll those lines while
+    the segment is being spoken. Unanchored segments are general commentary
+    (intros, transitions, big-picture observations) — the diff stays put.
+    """
+
+    text: str = Field(
+        ..., description="A few sentences. Sized for a single visual focus."
+    )
+    anchor: CodeAnchor | None = Field(
+        None,
+        description=(
+            "Lines in the chunk's diff that this segment is talking about. "
+            "Omit for general commentary."
+        ),
+    )
+
+
 class ChunkNarration(BaseModel):
     """Everything generated for one chunk: script + side-panel data."""
 
     chunk_id: str
     narration: str = Field(
-        ..., description="The spoken script. Plain prose; TTS-friendly."
+        ...,
+        description=(
+            "The full spoken script. Plain prose; TTS-friendly. When `segments` "
+            "is non-empty this is just the concatenation for transcript/display."
+        ),
+    )
+    segments: list[NarrationSegment] = Field(
+        default_factory=list,
+        description=(
+            "Optional ordered narration segments. When present, the player can "
+            "guide the diff (highlight + scroll) per segment as audio plays."
+        ),
+    )
+    segment_offsets_ms: list[int] = Field(
+        default_factory=list,
+        description=(
+            "Populated by the backend after TTS: cumulative start time in "
+            "milliseconds for each segment in the concatenated audio. Same "
+            "length as `segments`."
+        ),
     )
     highlights: list[Highlight] = []
     related_code: list[RelatedCode] = []

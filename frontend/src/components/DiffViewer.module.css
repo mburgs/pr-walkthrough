@@ -191,6 +191,25 @@
   background: rgba(255, 255, 255, 0.025) !important;
 }
 
+/* ---------- Active row (guided-tour spotlight) ----------
+   The narration drives this: while a segment plays, its anchored lines
+   get the accent backlight + a subtle pulse. */
+.diffTable :global(tr.diff-line) {
+  transition: background 200ms ease;
+}
+.diffTable :global(tr.diff-line).activeRow :global(.diff-gutter),
+.activeRow :global(.diff-gutter) {
+  background: var(--accent-muted) !important;
+  color: var(--accent) !important;
+  border-left-color: var(--accent) !important;
+}
+.diffTable :global(tr.diff-line).activeRow :global(.diff-code),
+.activeRow :global(.diff-code) {
+  background: var(--accent-muted) !important;
+  color: var(--text-strong) !important;
+  box-shadow: inset 0 0 0 1px rgba(212, 255, 58, 0.22);
+}
+
 /* ---------- Empty / fallback ---------- */
 
 .noHunks {

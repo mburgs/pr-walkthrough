@@ -75,9 +75,18 @@ export interface Concern {
   anchor: CodeAnchor | null;
 }
 
+export interface NarrationSegment {
+  text: string;
+  anchor: CodeAnchor | null;
+}
+
 export interface ChunkNarration {
   chunk_id: string;
   narration: string;
+  /** Ordered narration segments. Empty array on older narrations or fallback. */
+  segments: NarrationSegment[];
+  /** Cumulative start-time (ms) per segment within the concatenated audio. */
+  segment_offsets_ms: number[];
   highlights: Highlight[];
   related_code: RelatedCode[];
   concerns: Concern[];

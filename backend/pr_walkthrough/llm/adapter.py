@@ -221,23 +221,51 @@ PLAN_TOUR_TOOL = {
     },
 }
 
+# Guided-tour segment: a few-sentence chunk of narration plus an optional
+# anchor that the UI uses to highlight + scroll the diff while the segment
+# is being spoken.
+_NARRATION_SEGMENT_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "text": {"type": "string"},
+        "anchor": {"anyOf": [_CODE_ANCHOR_SCHEMA, {"type": "null"}]},
+    },
+    "required": ["text"],
+    "additionalProperties": False,
+}
+
 NARRATE_CHUNK_TOOL = {
     "name": "emit_chunk_narration",
     "description": (
-        "Emit the full narration for one chunk of the tour. "
-        "Called exactly once per chunk."
+        "Emit the narration for one chunk as a guided walkthrough. The reviewer "
+        "hears segments in order; each anchored segment makes the UI highlight "
+        "and scroll to those lines while it plays. Unanchored segments are "
+        "general commentary."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "chunk_id": {"type": "string"},
-            "narration": {"type": "string"},
+            "segments": {
+                "type": "array",
+                "items": _NARRATION_SEGMENT_SCHEMA,
+                "minItems": 1,
+                "description": (
+                    "Ordered narration. Aim for ~3-8 segments per chunk. Most "
+                    "segments should be anchored to specific lines within the "
+                    "chunk's hunks; reserve unanchored segments for intros, "
+                    "transitions, or genuinely big-picture observations."
+                ),
+            },
             "highlights": {"type": "array", "items": _HIGHLIGHT_SCHEMA},
             "related_code": {"type": "array", "items": _RELATED_CODE_SCHEMA},
             "concerns": {"type": "array", "items": _CONCERN_SCHEMA},
             "look_closer_for": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["chunk_id", "narration", "highlights", "related_code", "concerns", "look_closer_for"],
+        "required": [
+            "chunk_id", "segments", "highlights", "related_code",
+            "concerns", "look_closer_for",
+        ],
         "additionalProperties": False,
     },
 }
@@ -585,7 +613,28 @@ class ClaudeLLMAdapter:
 
     @staticmethod
     def _parse_chunk_narration(raw: dict) -> ChunkNarration:
-        """Validate and return a ChunkNarration from a raw tool input dict."""
+        """Validate and return a ChunkNarration from a raw tool input dict.
+
+        The LLM now emits `segments` instead of a single `narration` string;
+        derive `narration` here (joined for transcript/display) so the rest
+        of the pipeline still has the plain-prose field it expects.
+
+        Also coerces a few common LLM-produced shape quirks:
+          - line_range emitted as [n] (single line) → [n, n]
+          - line_range emitted as a single int → [n, n]
+        """
+        # Concat segments → narration
+        if "narration" not in raw and isinstance(raw.get("segments"), list):
+            raw = {
+                **raw,
+                "narration": " ".join(
+                    s.get("text", "").strip()
+                    for s in raw["segments"]
+                    if isinstance(s, dict)
+                ),
+            }
+        # Coerce malformed anchors anywhere in the payload
+        _coerce_anchors(raw)
         try:
             return ChunkNarration.model_validate(raw)
         except ValidationError as e:
@@ -603,6 +652,27 @@ class ClaudeLLMAdapter:
 # ---------------------------------------------------------------------------
 # Streaming helpers
 # ---------------------------------------------------------------------------
+
+def _coerce_anchors(node: Any) -> None:
+    """Walk a dict/list tree and fix anchor.line_range shape quirks in place.
+
+    The LLM sometimes emits a single-line anchor as `line_range: [42]` or
+    even `line_range: 42`. The schema wants `[start, end]`. Patch both up.
+    """
+    if isinstance(node, dict):
+        if "anchor" in node and isinstance(node["anchor"], dict):
+            anchor = node["anchor"]
+            lr = anchor.get("line_range")
+            if isinstance(lr, int):
+                anchor["line_range"] = [lr, lr]
+            elif isinstance(lr, list) and len(lr) == 1 and isinstance(lr[0], int):
+                anchor["line_range"] = [lr[0], lr[0]]
+        for v in node.values():
+            _coerce_anchors(v)
+    elif isinstance(node, list):
+        for item in node:
+            _coerce_anchors(item)
+
 
 def _unescape_json_string_fragment(fragment: str) -> str:
     """Lightly unescape a JSON string fragment (not a complete string).

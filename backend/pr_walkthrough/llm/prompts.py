@@ -179,6 +179,14 @@ def build_narrate_chunk_user_message(
             )
         related_text = "\nRELATED CODE (already retrieved)\n" + "\n".join(lines)
 
+    # File:line ranges available for anchoring (the chunk's hunks, new side).
+    anchorable = []
+    for h in chunk.hunks:
+        start = h.new_range[0]
+        end = h.new_range[0] + max(h.new_range[1] - 1, 0)
+        anchorable.append(f"{h.file} lines {start}-{end}")
+    anchor_hint = "\n".join(f"  • {a}" for a in anchorable)
+
     return f"""\
 Narrate chunk {chunk.chunk_id}: {chunk.summary}
 
@@ -187,30 +195,47 @@ CHUNK DIFF
 {hunk_text}
 {related_text}
 
+ANCHORABLE LINE RANGES (use these as `anchor.line_range` values)
+{anchor_hint}
+
 TASK
 ----
 Produce a ChunkNarration for chunk_id="{chunk.chunk_id}".
 
-narration: The spoken script. 2-5 sentences of direct, concrete prose \
-describing what changed, why it matters, and any design choices worth noting. \
-This will be read aloud by TTS — write for the ear, not the eye. No markdown, \
-no headers, no bullet points.
+segments: An ORDERED list of 3-8 narration segments that walks the reviewer \
+through this chunk as a guided tour. Each segment is 1-3 sentences of direct, \
+concrete spoken prose (TTS will read it aloud — write for the ear, no markdown).
 
-highlights: 0-3 line ranges in the diff that deserve visual emphasis. Include \
-only if genuinely important (the central mechanism, a surprising detail). \
-Omit if the whole hunk is equally important.
+Each segment optionally carries an `anchor` — the file + line_range it is \
+talking about. When set, the UI will highlight and scroll to those lines while \
+the segment plays. Anchor rules:
 
-related_code: Include the provided related-code snippets if they are \
-genuinely relevant to understanding this chunk. You may omit any that are not. \
-Do not invent snippets — only use what was provided. Set relationship to one \
-of: definition, callsite, test, prior_version, sibling.
+  - Use file paths and line numbers from the ANCHORABLE LINE RANGES above.
+  - line_range is [start, end] inclusive, both on the new (post-change) side.
+  - Keep anchors tight: ideally a single statement or contiguous block of \
+2-8 lines. Don't anchor a whole hunk unless you are literally summarising it.
+  - Omit `anchor` (leave it null) for: intros ("Let's start with…"), \
+transitions ("Now to the caller side…"), and genuine big-picture observations \
+that are not about specific lines.
+  - Aim for MOST segments to be anchored. A walkthrough that never moves \
+defeats the purpose.
+
+The first segment is usually an unanchored intro; later segments march through \
+the change in logical order, anchoring as they go.
+
+highlights: 0-3 line ranges in the diff that deserve visual emphasis in the \
+side panel. Include only if genuinely important. This is separate from \
+segment anchors and does not need to overlap with them.
+
+related_code: Include the provided related-code snippets if genuinely \
+relevant. Don't invent snippets — only use what was provided. Set relationship \
+to one of: definition, callsite, test, prior_version, sibling.
 
 concerns: 0-3 items. Only raise a concern if it is worth a PR comment. \
 Write suggested_question as ready-to-post PR comment wording.
 
-look_closer_for: 0-3 short strings calling the reviewer's attention to \
-subtle issues or missing pieces (schema migrations, race conditions, missing \
-tests, etc.).
+look_closer_for: 0-3 short strings calling attention to subtle issues or \
+missing pieces (schema migrations, race conditions, missing tests, etc.).
 """
 
 

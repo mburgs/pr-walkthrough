@@ -7,6 +7,7 @@ import type {
 } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import NarrationPlayer from "./NarrationPlayer";
+import { highlightSnippet, languageFor, renderHast } from "../lib/highlight";
 import styles from "./RightRail.module.css";
 
 interface Props {
@@ -15,6 +16,7 @@ interface Props {
   narrationLoading: boolean;
   collapsed: boolean;
   onToggle: () => void;
+  onSegmentChange?: (segmentIndex: number) => void;
 }
 
 /**
@@ -29,6 +31,7 @@ export default function RightRail({
   narrationLoading,
   collapsed,
   onToggle,
+  onSegmentChange,
 }: Props) {
   const { flags } = useSession();
 
@@ -83,6 +86,7 @@ export default function RightRail({
               chunk={chunk}
               narration={narration}
               loading={narrationLoading}
+              onSegmentChange={onSegmentChange}
             />
           )}
         </div>
@@ -116,15 +120,21 @@ export default function RightRail({
           count={sectionCounts.related}
           defaultOpen={false}
         >
-          {narration?.related_code.map((r, i) => (
-            <div key={i} className={styles.row}>
-              <div className={styles.rowHeader}>
-                <span className={styles.relationship}>{r.relationship}</span>
-                <Anchor file={r.anchor.file} line={r.anchor.line_range} />
+          {narration?.related_code.map((r, i) => {
+            const lang = languageFor(r.anchor.file);
+            const hast = highlightSnippet(r.snippet, lang);
+            return (
+              <div key={i} className={styles.row}>
+                <div className={styles.rowHeader}>
+                  <span className={styles.relationship}>{r.relationship}</span>
+                  <Anchor file={r.anchor.file} line={r.anchor.line_range} />
+                </div>
+                <pre className={styles.snippet}>
+                  {hast ? renderHast(hast) : r.snippet}
+                </pre>
               </div>
-              <pre className={styles.snippet}>{r.snippet}</pre>
-            </div>
-          ))}
+            );
+          })}
         </Section>
 
         <Section

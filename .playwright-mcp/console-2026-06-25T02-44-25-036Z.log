@@ -1,0 +1,60 @@
+[  454010ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/lib/highlight.ts:0
+[  454011ms] [ERROR] [vite] Failed to reload /src/components/RightRail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  464643ms] [ERROR] [vite] Failed to reload /src/components/RightRail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  867310ms] TypeError: Cannot read properties of undefined (reading 'length')
+    at NarrationPlayer (http://localhost:5180/src/components/NarrationPlayer.tsx?t=1782356332314:126:48)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12)
+    at renderWithHooks (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:4213:19)
+    at updateFunctionComponent (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:5569:16)
+    at beginWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:6140:20)
+    at runWithFiberInDEV (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:851:66)
+    at performUnitOfWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8429:92)
+    at workLoopSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8325:37)
+    at renderRootSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8309:6)
+    at performWorkOnRoot (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:7994:27)
+[  867309ms] [WARNING] %s
+
+%s
+ An error occurred in the <NarrationPlayer> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524
+[  876430ms] TypeError: Cannot read properties of undefined (reading 'length')
+    at NarrationPlayer (http://localhost:5180/src/components/NarrationPlayer.tsx?t=1782356341320:126:48)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12)
+    at renderWithHooks (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:4213:19)
+    at updateFunctionComponent (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:5569:16)
+    at beginWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:6140:20)
+    at runWithFiberInDEV (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:851:66)
+    at performUnitOfWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8429:92)
+    at workLoopSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8325:37)
+    at renderRootSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8309:6)
+    at performWorkOnRoot (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:7994:27)
+[  876430ms] [WARNING] %s
+
+%s
+ An error occurred in the <NarrationPlayer> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524
+[  885802ms] TypeError: Cannot read properties of undefined (reading 'length')
+    at NarrationPlayer (http://localhost:5180/src/components/NarrationPlayer.tsx?t=1782356350633:126:48)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12)
+    at renderWithHooks (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:4213:19)
+    at updateFunctionComponent (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:5569:16)
+    at beginWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:6140:20)
+    at runWithFiberInDEV (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:851:66)
+    at performUnitOfWork (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8429:92)
+    at workLoopSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8325:37)
+    at renderRootSync (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:8309:6)
+    at performWorkOnRoot (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:7994:27)
+[  885752ms] [WARNING] %s
+
+%s
+ An error occurred in the <NarrationPlayer> component. Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://react.dev/link/error-boundaries to learn more about error boundaries. @ http://localhost:5180/@vite/client:524
+[  898927ms] [ERROR] [vite] Failed to reload /src/components/SessionShell.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  908259ms] [ERROR] [vite] Failed to reload /src/components/SessionShell.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  914818ms] [ERROR] [vite] Failed to reload /src/components/SessionShell.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  930010ms] [ERROR] [vite] Failed to reload /src/components/SessionShell.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  937822ms] [ERROR] [vite] Failed to reload /src/components/RightRail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  944390ms] [ERROR] [vite] Failed to reload /src/components/RightRail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  957317ms] [ERROR] [vite] Failed to reload /src/components/RightRail.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[ 1053910ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5180/@vite/client:992
+[ 1054074ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/lib/highlight.ts:0

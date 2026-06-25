@@ -1,6 +1,7 @@
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { parseDiff, Diff, Hunk as DiffHunk, tokenize } from "react-diff-view";
 import { refractor } from "refractor/all";
+import type { CodeAnchor } from "../contracts";
 
 /**
  * refractor v5 returns a hast `Root` node from highlight(); react-diff-view's
@@ -20,6 +21,8 @@ import styles from "./DiffViewer.module.css";
 
 interface Props {
   chunk: TourChunk;
+  /** Lines to spotlight (highlight + scroll) — driven by the active narration segment. */
+  activeAnchor?: CodeAnchor | null;
 }
 
 /* ------------------------------------------------------------------ *
@@ -64,7 +67,8 @@ function hunksToUnifiedDiff(file: string, hunks: Hunk[]): string {
   return lines.join("\n");
 }
 
-export default function DiffViewer({ chunk }: Props) {
+export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
+  const containerRef = useRef<HTMLDivElement>(null);
   const fileGroups = useMemo(() => {
     const groups: Record<string, Hunk[]> = {};
     for (const hunk of chunk.hunks) {
@@ -73,12 +77,40 @@ export default function DiffViewer({ chunk }: Props) {
     return groups;
   }, [chunk]);
 
+  // Highlight + scroll the rows matching activeAnchor's new-side line range.
+  // react-diff-view tags each tr with .diff-line and uses the second gutter td
+  // for the new-side line number; we read that to identify rows.
+  useEffect(() => {
+    const root = containerRef.current;
+    if (!root) return;
+    // Clear previous highlight
+    root.querySelectorAll(`.${styles.activeRow}`).forEach(el => el.classList.remove(styles.activeRow));
+    if (!activeAnchor) return;
+
+    const fileCard = root.querySelector<HTMLElement>(`[data-file="${cssEscape(activeAnchor.file)}"]`);
+    if (!fileCard) return;
+    const [start, end] = activeAnchor.line_range;
+
+    const matched: HTMLElement[] = [];
+    fileCard.querySelectorAll<HTMLTableRowElement>("tr.diff-line").forEach(tr => {
+      const ln = readNewSideLine(tr);
+      if (ln != null && ln >= start && ln <= end) {
+        tr.classList.add(styles.activeRow);
+        matched.push(tr);
+      }
+    });
+
+    if (matched.length === 0) return;
+    // Scroll the first matched line into view (smooth)
+    matched[0].scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [activeAnchor, chunk]);
+
   if (chunk.hunks.length === 0) {
     return <div className={styles.noHunks}>No diff hunks for this chunk.</div>;
   }
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} ref={containerRef}>
       {Object.entries(fileGroups).map(([file, hunks]) => {
         const lang = languageFor(file);
         const diffText = hunksToUnifiedDiff(file, hunks);
@@ -105,11 +137,12 @@ export default function DiffViewer({ chunk }: Props) {
             }
           }
 
+          const filePath = parsed.newPath ?? parsed.oldPath ?? "unknown";
           return (
-            <div key={`${parsed.newPath ?? i}`} className={styles.file}>
+            <div key={`${filePath}-${i}`} className={styles.file} data-file={filePath}>
               <div className={styles.fileHeader}>
                 <span className={styles.fileIcon} aria-hidden>◰</span>
-                <span className={styles.fileName}>{parsed.newPath ?? parsed.oldPath ?? "unknown"}</span>
+                <span className={styles.fileName}>{filePath}</span>
                 <span className={styles.fileType}>{parsed.type}</span>
                 {lang && <span className={styles.langBadge}>{lang}</span>}
               </div>
@@ -132,6 +165,29 @@ export default function DiffViewer({ chunk }: Props) {
       })}
     </div>
   );
+}
+
+/**
+ * Read the new-side line number off a diff row.
+ *
+ * In react-diff-view's unified view each tr has two `.diff-gutter` cells:
+ * old-side then new-side. The new-side cell shows the line number for
+ * insert/normal rows; deletes show old-only. We grab the LAST gutter td
+ * (always the new side) and parse its text.
+ */
+function readNewSideLine(tr: HTMLTableRowElement): number | null {
+  const gutters = tr.querySelectorAll<HTMLTableCellElement>("td.diff-gutter");
+  const newSide = gutters[gutters.length - 1];
+  if (!newSide) return null;
+  const n = parseInt(newSide.textContent?.trim() || "", 10);
+  return Number.isFinite(n) ? n : null;
+}
+
+function cssEscape(value: string): string {
+  if (typeof window !== "undefined" && (window as any).CSS?.escape) {
+    return (window as any).CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, "\\$&");
 }
 
 function FallbackPre({ file, hunks }: { file: string; hunks: Hunk[] }) {

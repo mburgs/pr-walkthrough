@@ -54,15 +54,40 @@ async def process_chunk(
         # 6. chunk_complete
         await publish(session_id, {"event_type": "chunk_complete", "chunk_id": chunk.chunk_id})
 
-        # 7. Synthesise audio. Adapters yield a mix of headered WAVs (first
-        # chunk) and raw PCM (subsequent), so re-wrap as a single valid WAV
-        # before caching — otherwise the browser <audio> tag can't play it.
-        from pr_walkthrough.tts._wav import merge_synth_chunks
+        # 7. Synthesise audio. If the LLM gave us guided-tour segments,
+        # synth each one separately and concat: that way we know each
+        # segment's start offset in the final WAV, which the player uses
+        # to drive the diff highlight/scroll as audio plays.
+        from pr_walkthrough.tts._wav import (
+            merge_synth_chunks, pcm_from_wav, build_wav_bytes, TARGET_SAMPLE_RATE,
+        )
 
-        audio_chunks: list[bytes] = []
-        async for chunk_bytes in ctx.tts.synth(narration.narration):
-            audio_chunks.append(chunk_bytes)
-        audio = merge_synth_chunks(audio_chunks)
+        if narration.segments:
+            segment_pcm: list[bytes] = []
+            offsets_ms: list[int] = []
+            cumulative_pcm_len = 0
+            for seg in narration.segments:
+                seg_chunks: list[bytes] = []
+                async for c in ctx.tts.synth(seg.text):
+                    seg_chunks.append(c)
+                # extract PCM from each yielded chunk (mix of WAVs and raw PCM)
+                seg_pcm = b"".join(pcm_from_wav(c) for c in seg_chunks)
+                # Mark this segment's start *before* appending its PCM
+                offsets_ms.append(
+                    cumulative_pcm_len * 1000 // (TARGET_SAMPLE_RATE * 2)
+                )
+                segment_pcm.append(seg_pcm)
+                cumulative_pcm_len += len(seg_pcm)
+            audio = build_wav_bytes(b"".join(segment_pcm))
+            # Persist the offsets back to the narration so the API can serve them
+            narration = narration.model_copy(update={"segment_offsets_ms": offsets_ms})
+            ctx.store.save_narration(session_id, narration)
+        else:
+            audio_chunks: list[bytes] = []
+            async for chunk_bytes in ctx.tts.synth(narration.narration):
+                audio_chunks.append(chunk_bytes)
+            audio = merge_synth_chunks(audio_chunks)
+
         ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio)
 
         # 8. audio_ready

@@ -1,0 +1,13 @@
+- generic [ref=e3]:
+  - generic [ref=e4]: "[plugin:vite:oxc] Transform failed with 1 error: [PARSE_ERROR] Expected `>` but found `Identifier` ╭─[ src/lib/highlight.ts:60:13 ] │ 60 │ <span key={i} className={cls}> │ ─┬─ │ ╰─── `>` expected ────╯"
+  - generic [ref=e5]: /Users/michoel/code/pr-walkthrough/.claude/worktrees/live-demo/frontend/src/lib/highlight.ts
+  - generic [ref=e6]: at transformWithOxc (file:///Users/michoel/code/pr-walkthrough/.claude/worktrees/live-demo/frontend/node_modules/vite/dist/node/chunks/node.js:3657:19) at TransformPluginContext.transform (file:///Users/michoel/code/pr-walkthrough/.claude/worktrees/live-demo/frontend/node_modules/vite/dist/node/chunks/node.js:3728:26) at EnvironmentPluginContainer.transform (file:///Users/michoel/code/pr-walkthrough/.claude/worktrees/live-demo/frontend/node_modules/vite/dist/node/chunks/node.js:29699:51) at async loadAndTransform (file:///Users/michoel/code/pr-walkthrough/.claude/worktrees/live-demo/frontend/node_modules/vite/dist/node/chunks/node.js:19725:26) at async viteTransformMiddleware (file:///Users/michoel/code/pr-walkthrough/.claude/worktrees/live-demo/frontend/node_modules/vite/dist/node/chunks/node.js:24149:20)
+  - generic [ref=e7]:
+    - text: Click outside, press Esc key, or fix the code to dismiss.
+    - text: You can also disable this overlay by setting
+    - code [ref=e8]: server.hmr.overlay
+    - text: to
+    - code [ref=e9]: "false"
+    - text: in
+    - code [ref=e10]: vite.config.ts
+    - text: .
