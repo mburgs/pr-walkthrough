@@ -145,20 +145,29 @@ _HUNK_SCHEMA = {
     "additionalProperties": False,
 }
 
-_TOUR_CHUNK_SCHEMA = {
+# LEAN tour-chunk schema for plan_tour. Instead of asking the LLM to echo the
+# full Hunk (file/ranges/header/body) for each chunk — which on a multi-thousand-
+# line PR easily blows past max_tokens and gets truncated — we ask for hunk_ids
+# referencing the indexed diff in the prompt. The orchestrator looks them up
+# and reconstitutes a full TourChunk. files[] is similarly redundant (derivable
+# from hunk_ids) so we drop it from the LLM contract too.
+_LEAN_TOUR_CHUNK_SCHEMA = {
     "type": "object",
     "properties": {
         "chunk_id": {"type": "string"},
-        "files": {"type": "array", "items": {"type": "string"}},
-        "hunks": {"type": "array", "items": _HUNK_SCHEMA},
+        "hunk_ids": {
+            "type": "array",
+            "items": {"type": "integer"},
+            "minItems": 1,
+            "description": "0-based indices into the FULL DIFF list from the prompt",
+        },
         "summary": {"type": "string"},
         "rationale_for_position": {"type": "string"},
         "est_concern_level": {"type": "string", "enum": ["low", "medium", "high"]},
     },
     "required": [
         "chunk_id",
-        "files",
-        "hunks",
+        "hunk_ids",
         "summary",
         "rationale_for_position",
         "est_concern_level",
@@ -198,17 +207,16 @@ _PR_METADATA_SCHEMA = {
 PLAN_TOUR_TOOL = {
     "name": "emit_tour_plan",
     "description": (
-        "Emit the ordered tour plan for this pull request. "
-        "Called exactly once with the complete plan."
+        "Emit the ordered tour plan for this pull request. Called exactly once. "
+        "Each chunk references diff hunks by their 0-based index from the prompt — "
+        "the orchestrator looks them up and attaches the full Hunk objects."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
-            "session_id": {"type": "string"},
-            "pr": _PR_METADATA_SCHEMA,
-            "chunks": {"type": "array", "items": _TOUR_CHUNK_SCHEMA},
+            "chunks": {"type": "array", "items": _LEAN_TOUR_CHUNK_SCHEMA},
         },
-        "required": ["session_id", "pr", "chunks"],
+        "required": ["chunks"],
         "additionalProperties": False,
     },
 }
@@ -287,17 +295,17 @@ class ClaudeLLMAdapter:
     # ------------------------------------------------------------------
 
     async def plan_tour(self, pr: PRMetadata, diff: list[Hunk]) -> TourPlan:
-        """Call Claude Opus to produce an ordered TourPlan for the PR.
+        """Call Claude to produce an ordered TourPlan for the PR.
 
-        Uses tool-use structured output to guarantee the response parses
-        into TourPlan. The system prompt is cached. The diff is included in
-        the user turn (varies per PR, so not cached).
+        The LLM emits a lean response (chunk_id, hunk_ids, summary,
+        rationale, severity); the orchestrator reconstitutes the full
+        TourPlan by looking hunks up by index from the input diff.
         """
         user_message = build_plan_tour_user_message(pr, diff)
 
         response = await self._client.messages.create(
             model=self._plan_model,
-            max_tokens=8192,
+            max_tokens=4096,  # lean schema — no diff bodies echoed back
             system=[
                 {
                     "type": "text",
@@ -311,18 +319,48 @@ class ClaudeLLMAdapter:
         )
 
         raw = self._extract_tool_input(response, "emit_tour_plan")
+        return self._reconstitute_plan(pr, diff, raw)
 
-        # Replace placeholder session_id with the pr URL slug
-        raw["session_id"] = self._make_session_id(pr)
-
-        try:
-            plan = TourPlan.model_validate(raw)
-        except ValidationError as e:
+    def _reconstitute_plan(
+        self, pr: PRMetadata, diff: list[Hunk], lean: dict
+    ) -> TourPlan:
+        """Attach full Hunks + PR metadata to the LLM's lean output."""
+        lean_chunks = lean.get("chunks", [])
+        if not lean_chunks:
             raise ValueError(
-                f"TourPlan schema mismatch from Claude:\n{e}\n\nRaw input: {json.dumps(raw, indent=2)}"
-            ) from e
+                f"Tour plan came back with no chunks. Raw: {json.dumps(lean)[:500]}"
+            )
 
-        return plan
+        full_chunks: list[TourChunk] = []
+        for lc in lean_chunks:
+            hunk_ids = lc.get("hunk_ids") or []
+            try:
+                hunks = [diff[i] for i in hunk_ids]
+            except (IndexError, TypeError) as e:
+                raise ValueError(
+                    f"Chunk {lc.get('chunk_id')} referenced out-of-range hunk index in "
+                    f"{hunk_ids} (diff has {len(diff)} hunks): {e}"
+                ) from e
+            files = sorted({h.file for h in hunks})
+            try:
+                full_chunks.append(TourChunk(
+                    chunk_id=lc["chunk_id"],
+                    files=files,
+                    hunks=hunks,
+                    summary=lc["summary"],
+                    rationale_for_position=lc["rationale_for_position"],
+                    est_concern_level=lc["est_concern_level"],
+                ))
+            except (KeyError, ValidationError) as e:
+                raise ValueError(
+                    f"Chunk {lc.get('chunk_id', '?')} failed validation:\n{e}"
+                ) from e
+
+        return TourPlan(
+            session_id=self._make_session_id(pr),
+            pr=pr,
+            chunks=full_chunks,
+        )
 
     # ------------------------------------------------------------------
     # narrate_chunk (non-streaming)

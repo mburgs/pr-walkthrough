@@ -1,22 +1,69 @@
+/* ------------------------------------------------------------------ *
+ * Typography
+ *
+ * Hanken Grotesk for UI prose (clear, modern, more character than the
+ * usual Inter), JetBrains Mono for code (ligatures, calm). Loaded via
+ * Google Fonts; falls back to system sans / SF Mono if offline.
+ * ------------------------------------------------------------------ */
+@import url('https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg: #0d1117;
-  --surface: #161b22;
-  --border: #30363d;
-  --text: #e6edf3;
-  --text-muted: #8b949e;
-  --accent: #388bfd;
-  --accent-hover: #58a6ff;
-  --danger: #f85149;
-  --warn: #d29922;
-  --ok: #3fb950;
-  --add: #0e4429;
-  --add-text: #3fb950;
-  --del: #4a0b0b;
-  --del-text: #f85149;
-  --radius: 6px;
-  --font-mono: "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
+  /* Surfaces — slightly warmer than pure GitHub-dark */
+  --bg:           #0b0d12;
+  --bg-tinted:    #11141b;       /* used for diff body background */
+  --surface:      #14171f;
+  --surface-2:    #1b1f29;       /* hovered surface */
+  --border:       #262b36;
+  --border-soft:  #1d212b;
+
+  /* Text */
+  --text:         #e8ecf2;
+  --text-strong:  #ffffff;
+  --text-muted:   #8b93a7;
+  --text-dim:     #5c6478;
+
+  /* Single distinctive accent — a warm signal yellow-green, used
+     sparingly: active chunk, primary buttons, key highlights. */
+  --accent:       #d4ff3a;
+  --accent-text:  #0a0d11;
+  --accent-muted: rgba(212, 255, 58, 0.12);
+
+  /* Semantic */
+  --info:         #7c9cff;
+  --ok:           #6cd97e;
+  --warn:         #ffb845;
+  --danger:       #ff6b6b;
+
+  /* Severity tints (used for badges) */
+  --sev-low-bg:     rgba(108, 217, 126, 0.12);
+  --sev-low-fg:     #6cd97e;
+  --sev-med-bg:     rgba(255, 184, 69, 0.14);
+  --sev-med-fg:     #ffb845;
+  --sev-high-bg:    rgba(255, 107, 107, 0.16);
+  --sev-high-fg:    #ff6b6b;
+
+  /* Diff — subtle tinted backgrounds, full-strength foreground text.
+     Inspired by GitHub dim's accessibility-friendly contrast model. */
+  --diff-add-bg:    rgba(70, 200, 120, 0.10);
+  --diff-add-marker: rgba(70, 200, 120, 0.65);
+  --diff-add-tint:   rgba(70, 200, 120, 0.30);
+  --diff-del-bg:    rgba(255, 107, 107, 0.10);
+  --diff-del-marker: rgba(255, 107, 107, 0.65);
+  --diff-del-tint:   rgba(255, 107, 107, 0.28);
+  --diff-gutter-bg: rgba(255, 255, 255, 0.02);
+  --diff-hunk-bg:   rgba(124, 156, 255, 0.07);
+
+  /* Geometry */
+  --radius:       6px;
+  --radius-sm:    4px;
+  --radius-lg:    10px;
+  --shadow-1:     0 1px 0 rgba(255, 255, 255, 0.03), 0 8px 24px rgba(0, 0, 0, 0.35);
+
+  /* Type stacks */
+  --font-sans: "Hanken Grotesk", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", "SF Mono", "Cascadia Code", "Fira Code", Consolas, monospace;
 }
 
 html, body, #root { height: 100%; }
@@ -24,20 +71,67 @@ html, body, #root { height: 100%; }
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
   margin: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 button {
   cursor: pointer;
   font: inherit;
+  font-family: var(--font-sans);
+  letter-spacing: -0.005em;
 }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { color: var(--accent-hover); text-decoration: underline; }
+button:disabled { cursor: not-allowed; opacity: 0.5; }
 
-::-webkit-scrollbar { width: 6px; height: 6px; }
+a {
+  color: var(--info);
+  text-decoration: none;
+}
+a:hover { text-decoration: underline; }
+
+/* Slim scrollbars */
+::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+  background-clip: padding-box;
+}
+
+/* Apply our mono to react-diff-view's table */
+.diff { font-family: var(--font-mono) !important; font-size: 12.5px !important; }
+
+/* Prism token colors (used by syntax highlighting in DiffViewer) */
+.token.comment, .token.prolog, .token.doctype, .token.cdata {
+  color: #6c7286;
+  font-style: italic;
+}
+.token.punctuation { color: #b0b6c8; }
+.token.namespace { opacity: 0.7; }
+.token.property, .token.tag, .token.constant, .token.symbol, .token.deleted {
+  color: #ff8a8a;
+}
+.token.boolean, .token.number { color: #ffb845; }
+.token.selector, .token.attr-name, .token.string, .token.char, .token.builtin {
+  color: #b8f8a1;
+}
+.token.operator, .token.entity, .token.url, .language-css .token.string, .style .token.string {
+  color: #d4ff3a;
+}
+.token.atrule, .token.attr-value, .token.keyword {
+  color: #8ec0ff;
+}
+.token.function, .token.class-name { color: #c4a3ff; }
+.token.regex, .token.important, .token.variable { color: #ffb845; }
+.token.important, .token.bold { font-weight: 600; }
+.token.italic { font-style: italic; }

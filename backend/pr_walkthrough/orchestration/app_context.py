@@ -38,7 +38,13 @@ class AppContext:
             if os.environ.get("ANTHROPIC_API_KEY"):
                 try:
                     from pr_walkthrough.llm.adapter import ClaudeLLMAdapter
-                    llm = ClaudeLLMAdapter()
+                    # Sonnet for planning too — keeps wait under a minute even
+                    # on multi-thousand-line PRs. Opus is overkill for grouping +
+                    # ordering hunks. PR_WALKTHROUGH_PLAN_MODEL overrides.
+                    plan_model = os.environ.get(
+                        "PR_WALKTHROUGH_PLAN_MODEL", "claude-sonnet-4-6"
+                    )
+                    llm = ClaudeLLMAdapter(plan_model=plan_model)
                 except Exception:
                     from pr_walkthrough.fakes import FakeLLM
                     llm = FakeLLM()

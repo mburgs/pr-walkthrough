@@ -28,8 +28,16 @@ async def create_session(
     ctx: AppContext = Depends(get_app_context),
 ) -> TourPlan:
     """Fetch PR, plan tour, persist, spawn chunk-1 narration in background."""
+    import uuid
+
     metadata, hunks = await ctx.pr_source.fetch(body.pr_url)
     plan = await ctx.llm.plan_tour(metadata, hunks)
+
+    # The LLM populates session_id in its structured output, but it can pick a
+    # deterministic-looking ID (e.g. "sess_cli_cli_pr1") which collides on
+    # repeat POSTs — React StrictMode's dev double-effect alone tripped UNIQUE.
+    # Override with a server-generated UUID; the orchestrator owns identity.
+    plan = plan.model_copy(update={"session_id": f"sess_{uuid.uuid4().hex[:12]}"})
 
     ctx.store.create_session(plan)
 

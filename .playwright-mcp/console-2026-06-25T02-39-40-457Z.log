@@ -1,0 +1,24 @@
+[   73420ms] [WARNING] syntax highlight failed for python TypeError: Invalid attempt to iterate non-iterable instance.
+In order to be iterable, non-array objects must have a [Symbol.iterator]() method.
+    at _createForOfIteratorHelper (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:135:9)
+    at treeToPathList (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:1961:26)
+    at normalizeToLines (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:1987:26)
+    at tokenize (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:2652:361)
+    at http://localhost:5180/src/components/DiffViewer.tsx?t=1782355253851:128:16
+    at Array.map (<anonymous>)
+    at http://localhost:5180/src/components/DiffViewer.tsx?t=1782355253851:123:23
+    at Array.map (<anonymous>)
+    at DiffViewer (http://localhost:5180/src/components/DiffViewer.tsx?t=1782355253851:107:40)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12) @ http://localhost:5180/@vite/client:524
+[   73421ms] [WARNING] syntax highlight failed for python TypeError: Invalid attempt to iterate non-iterable instance.
+In order to be iterable, non-array objects must have a [Symbol.iterator]() method.
+    at _createForOfIteratorHelper (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:135:9)
+    at treeToPathList (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:1961:26)
+    at normalizeToLines (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:1987:26)
+    at tokenize (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:2652:361)
+    at http://localhost:5180/src/components/DiffViewer.tsx?t=1782355253851:128:16
+    at Array.map (<anonymous>)
+    at http://localhost:5180/src/components/DiffViewer.tsx?t=1782355253851:123:23
+    at Array.map (<anonymous>)
+    at DiffViewer (http://localhost:5180/src/components/DiffViewer.tsx?t=1782355253851:107:40)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12) @ http://localhost:5180/@vite/client:524

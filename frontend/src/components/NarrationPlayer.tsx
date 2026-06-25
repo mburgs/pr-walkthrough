@@ -65,22 +65,27 @@ export default function NarrationPlayer({ chunk, narration, loading }: Props) {
 
   return (
     <div className={styles.player}>
-      {loading && <div className={styles.loading}>Loading narration...</div>}
+      {loading && (
+        <div className={styles.loading}>
+          <span style={{ width: 6, height: 6, borderRadius: 3, background: "var(--accent)", display: "inline-block", animation: "pulse 1.4s infinite" }} />
+          narrating…
+        </div>
+      )}
       {!loading && narration && (
         <div className={styles.script}>{narration.narration}</div>
       )}
 
       <div className={styles.controls}>
-        <button className={styles.btn} onClick={handlePlay} disabled={loading || !narration}>
+        <button className={`${styles.btn} ${styles.playBtn}`} onClick={handlePlay} disabled={loading || !narration}>
           {playing ? "⏸ Pause" : "▶ Play"}
         </button>
         <button className={styles.btn} onClick={handleReplay} disabled={loading || !narration}>
-          ↺ Replay
+          ↺
         </button>
         <button className={styles.btn} onClick={handleSkip} disabled={loading || !narration || !playing}>
-          ⏭ Skip
+          ⏭
         </button>
-        {error && <span style={{ fontSize: 11, color: "var(--text-muted)" }}>{error}</span>}
+        {error && <span className={styles.errorNote}>{error}</span>}
         <span className={styles.chunkLabel}>{chunk.chunk_id}</span>
       </div>
 

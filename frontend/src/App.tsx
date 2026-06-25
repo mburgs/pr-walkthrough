@@ -1,12 +1,11 @@
 import { useEffect } from "react";
 import { SessionProvider, useSession } from "./contexts/SessionContext";
 import SessionShell from "./components/SessionShell";
-import QuestionTracker from "./components/QuestionTracker";
 import { exportTranscript } from "./lib/exportTranscript";
+import styles from "./App.module.css";
 
 const DEFAULT_PR_URL = "https://github.com/example-org/auth-service/pull/142";
 
-// "#session=<sid>" resumes; "?pr=<url>" overrides the default for a fresh session.
 function readBootHints(): { sid?: string; prUrl?: string } {
   const hash = window.location.hash.replace(/^#/, "");
   const sid = new URLSearchParams(hash).get("session") || undefined;
@@ -19,31 +18,31 @@ function AppContent() {
 
   useEffect(() => {
     const { sid, prUrl } = readBootHints();
-    if (sid) {
-      resumeSession(sid);
-    } else {
-      initSession(prUrl ?? DEFAULT_PR_URL);
-    }
+    if (sid) resumeSession(sid);
+    else initSession(prUrl ?? DEFAULT_PR_URL);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100%", color: "var(--text-muted)" }}>
-        Loading session…
+      <div className={styles.fullCenter}>
+        <div className={styles.loadingMark}>
+          <span className={styles.dotPulse} />
+          <span className={styles.loadingText}>narrating pull request…</span>
+        </div>
       </div>
     );
   }
 
   if (error) {
     return (
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", height: "100%", gap: 12 }}>
-        <div style={{ color: "var(--danger)" }}>Error: {error}</div>
-        <button
-          style={{ background: "var(--accent)", color: "#fff", border: "none", padding: "8px 16px", borderRadius: "var(--radius)", cursor: "pointer" }}
-          onClick={() => initSession(DEFAULT_PR_URL)}
-        >
-          Retry
-        </button>
+      <div className={styles.fullCenter}>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12, maxWidth: 480, textAlign: "center" }}>
+          <div className={styles.errorLabel}>Couldn’t load this PR</div>
+          <div className={styles.errorMsg}>{error}</div>
+          <button className={styles.retryBtn} onClick={() => initSession(DEFAULT_PR_URL)}>
+            Retry
+          </button>
+        </div>
       </div>
     );
   }
@@ -51,29 +50,37 @@ function AppContent() {
   if (!session) return null;
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%" }}>
-      <header style={{ background: "var(--surface)", borderBottom: "1px solid var(--border)", padding: "8px 16px", display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
-        <span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>pr-walkthrough</span>
-        <span style={{ color: "var(--text-muted)", fontSize: 13 }}>
-          {session.plan.pr.repo} #{session.plan.pr.number}
-        </span>
+    <div className={styles.app}>
+      <header className={styles.header}>
+        <div className={styles.brand}>
+          <span className={styles.brandMark}>pr</span>
+          <span className={styles.brandName}>walkthrough</span>
+        </div>
+        <div className={styles.separator} />
+        <a
+          className={styles.prRef}
+          href={session.plan.pr.url}
+          target="_blank"
+          rel="noreferrer"
+          title={session.plan.pr.title}
+        >
+          <span className={styles.prRepo}>{session.plan.pr.repo}</span>
+          <span className={styles.prHash}>#{session.plan.pr.number}</span>
+          <span className={styles.prTitle}>{session.plan.pr.title}</span>
+        </a>
         <span style={{ flex: 1 }} />
         <button
-          aria-label="Export transcript"
+          className={styles.headerBtn}
           onClick={() => exportTranscript(session.plan.session_id, session.plan)}
-          style={{ background: "transparent", color: "var(--text-muted)", border: "1px solid var(--border)", padding: "4px 10px", borderRadius: "var(--radius)", cursor: "pointer", fontSize: 12 }}
+          aria-label="Export transcript"
+          title="Download a markdown transcript of this walkthrough"
         >
-          Export transcript
+          ↓ Transcript
         </button>
       </header>
-      <div style={{ flex: 1, overflow: "hidden", display: "flex" }}>
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          <SessionShell />
-        </div>
-        <div style={{ width: 320, borderLeft: "1px solid var(--border)", overflowY: "auto", background: "var(--surface)", flexShrink: 0 }}>
-          <QuestionTracker />
-        </div>
-      </div>
+      <main className={styles.body}>
+        <SessionShell />
+      </main>
     </div>
   );
 }

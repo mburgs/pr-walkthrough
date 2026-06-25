@@ -1,0 +1,312 @@
+- generic [ref=e3]:
+  - banner [ref=e4]:
+    - generic [ref=e5]: pr-walkthrough
+    - generic [ref=e6]: "mburgs/calsync #4"
+    - button "Export transcript" [ref=e7] [cursor=pointer]
+  - generic [ref=e8]:
+    - generic [ref=e10]:
+      - complementary [ref=e11]:
+        - generic [ref=e12]:
+          - 'generic "Phase 4: availability ICS feed publisher" [ref=e13]'
+          - generic [ref=e14]: "#4 · mburgs · mburgs/calsync"
+        - generic [ref=e15]:
+          - 'button "c1 Core ICS generation: `ICSFeedPublisher` and the stable SHA-256 UID helper medium" [ref=e16] [cursor=pointer]':
+            - generic [ref=e17]: c1
+            - generic [ref=e18]: "Core ICS generation: `ICSFeedPublisher` and the stable SHA-256 UID helper"
+            - generic [ref=e19]: medium
+          - button "c2 9-test suite validating empty feed, field correctness, LOCATION/DESCRIPTION absence, UID stability, multi-block, file I/O, parent-dir creation, and calendar metadata medium" [ref=e20] [cursor=pointer]:
+            - generic [ref=e21]: c2
+            - generic [ref=e22]: 9-test suite validating empty feed, field correctness, LOCATION/DESCRIPTION absence, UID stability, multi-block, file I/O, parent-dir creation, and calendar metadata
+            - generic [ref=e23]: medium
+          - 'button "c3 Factory wiring: `create_availability_publisher()` routes `type=ics_feed` to `ICSFeedPublisher` low" [ref=e24] [cursor=pointer]':
+            - generic [ref=e25]: c3
+            - generic [ref=e26]: "Factory wiring: `create_availability_publisher()` routes `type=ics_feed` to `ICSFeedPublisher`"
+            - generic [ref=e27]: low
+          - 'button "c4 Cleanup: remove stale dead imports for unimplemented Mapbox and OSRM adapters in `factory.py` low" [ref=e28] [cursor=pointer]':
+            - generic [ref=e29]: c4
+            - generic [ref=e30]: "Cleanup: remove stale dead imports for unimplemented Mapbox and OSRM adapters in `factory.py`"
+            - generic [ref=e31]: low
+          - 'button "c5 main.py imports and argument additions: pull in `create_availability_publisher`, `BusyBlock`, `Transparency`, and the `--publish-availability` boolean flag low" [ref=e32] [cursor=pointer]':
+            - generic [ref=e33]: c5
+            - generic [ref=e34]: "main.py imports and argument additions: pull in `create_availability_publisher`, `BusyBlock`, `Transparency`, and the `--publish-availability` boolean flag"
+            - generic [ref=e35]: low
+          - 'button "c6 `_publish_availability()`: filters opaque non-all-day events into `BusyBlock`s, handles dry-run, guards on config presence, and swallows publish errors with a warning high" [ref=e36] [cursor=pointer]':
+            - generic [ref=e37]: c6
+            - generic [ref=e38]: "`_publish_availability()`: filters opaque non-all-day events into `BusyBlock`s, handles dry-run, guards on config presence, and swallows publish errors with a warning"
+            - generic [ref=e39]: high
+          - 'button "c7 Sync loop call sites: `_publish_availability` invoked after rule filtering in both dry-run and live paths medium" [ref=e40] [cursor=pointer]':
+            - generic [ref=e41]: c7
+            - generic [ref=e42]: "Sync loop call sites: `_publish_availability` invoked after rule filtering in both dry-run and live paths"
+            - generic [ref=e43]: medium
+          - 'button "c8 Drop unused `creds` binding in `_setup_auth` — result of `load_credentials` was assigned but never read low" [ref=e44] [cursor=pointer]':
+            - generic [ref=e45]: c8
+            - generic [ref=e46]: "Drop unused `creds` binding in `_setup_auth` — result of `load_credentials` was assigned but never read"
+            - generic [ref=e47]: low
+          - 'button "c9 `timezone.utc` → `UTC` constant modernisation across `state.last_sync_at` assignments low" [ref=e48] [cursor=pointer]':
+            - generic [ref=e49]: c9
+            - generic [ref=e50]: "`timezone.utc` → `UTC` constant modernisation across `state.last_sync_at` assignments"
+            - generic [ref=e51]: low
+          - 'button "c10 Dry-run print helpers: extract timestamp formatting into a variable to satisfy the line-length linter low" [ref=e52] [cursor=pointer]':
+            - generic [ref=e53]: c10
+            - generic [ref=e54]: "Dry-run print helpers: extract timestamp formatting into a variable to satisfy the line-length linter"
+            - generic [ref=e55]: low
+          - 'button "c11 Add `.claude/` to `.gitignore` to stop Claude Code worktree artefacts from being tracked low" [ref=e56] [cursor=pointer]':
+            - generic [ref=e57]: c11
+            - generic [ref=e58]: "Add `.claude/` to `.gitignore` to stop Claude Code worktree artefacts from being tracked"
+            - generic [ref=e59]: low
+      - main [ref=e60]:
+        - generic [ref=e63]:
+          - generic [ref=e64]:
+            - generic [ref=e65]: adapters/outputs/ics_feed.py
+            - generic [ref=e66]: modify
+          - table [ref=e67]:
+            - rowgroup [ref=e68]:
+              - table [ref=e69]:
+                - rowgroup [ref=e74]:
+                  - row "1 \"\"\"ICS availability feed publisher — implement in Phase 4.\"\"\"" [ref=e75]:
+                    - cell "1" [ref=e76] [cursor=pointer]
+                    - cell [ref=e77] [cursor=pointer]
+                    - cell "\"\"\"ICS availability feed publisher — implement in Phase 4.\"\"\"" [ref=e78]
+                  - row "1 \"\"\"ICS availability feed publisher." [ref=e79]:
+                    - cell [ref=e80] [cursor=pointer]
+                    - cell "1" [ref=e81] [cursor=pointer]
+                    - cell "\"\"\"ICS availability feed publisher." [ref=e82]
+                  - row "2" [ref=e83]:
+                    - cell [ref=e84] [cursor=pointer]
+                    - cell "2" [ref=e85] [cursor=pointer]
+                    - cell [ref=e86]
+                  - row "3 Generates a valid RFC 5545 ICS file from a list of BusyBlocks and writes it" [ref=e87]:
+                    - cell [ref=e88] [cursor=pointer]
+                    - cell "3" [ref=e89] [cursor=pointer]
+                    - cell "Generates a valid RFC 5545 ICS file from a list of BusyBlocks and writes it" [ref=e90]
+                  - row "4 to a local file path (e.g. docs/availability.ics for GitHub Pages serving)." [ref=e91]:
+                    - cell [ref=e92] [cursor=pointer]
+                    - cell "4" [ref=e93] [cursor=pointer]
+                    - cell "to a local file path (e.g. docs/availability.ics for GitHub Pages serving)." [ref=e94]
+                  - row "5 \"\"\"" [ref=e95]:
+                    - cell [ref=e96] [cursor=pointer]
+                    - cell "5" [ref=e97] [cursor=pointer]
+                    - cell "\"\"\"" [ref=e98]
+                  - row "6" [ref=e99]:
+                    - cell [ref=e100] [cursor=pointer]
+                    - cell "6" [ref=e101] [cursor=pointer]
+                    - cell [ref=e102]
+                  - row "7 import hashlib" [ref=e103]:
+                    - cell [ref=e104] [cursor=pointer]
+                    - cell "7" [ref=e105] [cursor=pointer]
+                    - cell "import hashlib" [ref=e106]
+                  - row "8 from datetime import UTC, datetime" [ref=e107]:
+                    - cell [ref=e108] [cursor=pointer]
+                    - cell "8" [ref=e109] [cursor=pointer]
+                    - cell "from datetime import UTC, datetime" [ref=e110]
+                  - row "9 from pathlib import Path" [ref=e111]:
+                    - cell [ref=e112] [cursor=pointer]
+                    - cell "9" [ref=e113] [cursor=pointer]
+                    - cell "from pathlib import Path" [ref=e114]
+                  - row "10" [ref=e115]:
+                    - cell [ref=e116] [cursor=pointer]
+                    - cell "10" [ref=e117] [cursor=pointer]
+                    - cell [ref=e118]
+                  - row "11 import structlog" [ref=e119]:
+                    - cell [ref=e120] [cursor=pointer]
+                    - cell "11" [ref=e121] [cursor=pointer]
+                    - cell "import structlog" [ref=e122]
+                  - row "12 from icalendar import Calendar, Event, vText" [ref=e123]:
+                    - cell [ref=e124] [cursor=pointer]
+                    - cell "12" [ref=e125] [cursor=pointer]
+                    - cell "from icalendar import Calendar, Event, vText" [ref=e126]
+                  - row "2 13" [ref=e127]:
+                    - cell "2" [ref=e128] [cursor=pointer]
+                    - cell "13" [ref=e129] [cursor=pointer]
+                    - cell [ref=e130]
+                  - row "3 14 from core.models import BusyBlock" [ref=e131]:
+                    - cell "3" [ref=e132] [cursor=pointer]
+                    - cell "14" [ref=e133] [cursor=pointer]
+                    - cell "from core.models import BusyBlock" [ref=e134]
+                  - row "4 15" [ref=e135]:
+                    - cell "4" [ref=e136] [cursor=pointer]
+                    - cell "15" [ref=e137] [cursor=pointer]
+                    - cell [ref=e138]
+                  - row "16 log = structlog.get_logger()" [ref=e139]:
+                    - cell [ref=e140] [cursor=pointer]
+                    - cell "16" [ref=e141] [cursor=pointer]
+                    - cell "log = structlog.get_logger()" [ref=e142]
+                  - row "17" [ref=e143]:
+                    - cell [ref=e144] [cursor=pointer]
+                    - cell "17" [ref=e145] [cursor=pointer]
+                    - cell [ref=e146]
+                  - row "5 18" [ref=e147]:
+                    - cell "5" [ref=e148] [cursor=pointer]
+                    - cell "18" [ref=e149] [cursor=pointer]
+                    - cell [ref=e150]
+                  - row "6 19 class ICSFeedPublisher:" [ref=e151]:
+                    - cell "6" [ref=e152] [cursor=pointer]
+                    - cell "19" [ref=e153] [cursor=pointer]
+                    - cell "class ICSFeedPublisher:" [ref=e154]
+                  - row "7 def __init__(self, **kwargs) -> None:" [ref=e155]:
+                    - cell "7" [ref=e156] [cursor=pointer]
+                    - cell [ref=e157] [cursor=pointer]
+                    - cell "def __init__(self, **kwargs) -> None:" [ref=e158]
+                  - row "8 self._kwargs = kwargs" [ref=e159]:
+                    - cell "8" [ref=e160] [cursor=pointer]
+                    - cell [ref=e161] [cursor=pointer]
+                    - cell "self._kwargs = kwargs" [ref=e162]
+                  - row "20 \"\"\"Writes BusyBlocks to an ICS file on disk.\"\"\"" [ref=e163]:
+                    - cell [ref=e164] [cursor=pointer]
+                    - cell "20" [ref=e165] [cursor=pointer]
+                    - cell "\"\"\"Writes BusyBlocks to an ICS file on disk.\"\"\"" [ref=e166]
+                  - row "21" [ref=e167]:
+                    - cell [ref=e168] [cursor=pointer]
+                    - cell "21" [ref=e169] [cursor=pointer]
+                    - cell [ref=e170]
+                  - 'row "22 def __init__(self, file_path: str) -> None:" [ref=e171]':
+                    - cell [ref=e172] [cursor=pointer]
+                    - cell "22" [ref=e173] [cursor=pointer]
+                    - 'cell "def __init__(self, file_path: str) -> None:" [ref=e174]'
+                  - row "23 self._file_path = Path(file_path)" [ref=e175]:
+                    - cell [ref=e176] [cursor=pointer]
+                    - cell "23" [ref=e177] [cursor=pointer]
+                    - cell "self._file_path = Path(file_path)" [ref=e178]
+                  - row "9 24" [ref=e179]:
+                    - cell "9" [ref=e180] [cursor=pointer]
+                    - cell "24" [ref=e181] [cursor=pointer]
+                    - cell [ref=e182]
+                  - 'row "10 25 def publish(self, busy_blocks: list[BusyBlock]) -> None:" [ref=e183]':
+                    - cell "10" [ref=e184] [cursor=pointer]
+                    - cell "25" [ref=e185] [cursor=pointer]
+                    - 'cell "def publish(self, busy_blocks: list[BusyBlock]) -> None:" [ref=e186]'
+                  - row "11 raise NotImplementedError(\"ICS feed publisher — implement in Phase 4\")" [ref=e187]:
+                    - cell "11" [ref=e188] [cursor=pointer]
+                    - cell [ref=e189] [cursor=pointer]
+                    - cell "raise NotImplementedError(\"ICS feed publisher — implement in Phase 4\")" [ref=e190]
+                  - row "26 cal = Calendar()" [ref=e191]:
+                    - cell [ref=e192] [cursor=pointer]
+                    - cell "26" [ref=e193] [cursor=pointer]
+                    - cell "cal = Calendar()" [ref=e194]
+                  - row "27 cal.add(\"prodid\", \"-//CalSync//Availability//EN\")" [ref=e195]:
+                    - cell [ref=e196] [cursor=pointer]
+                    - cell "27" [ref=e197] [cursor=pointer]
+                    - cell "cal.add(\"prodid\", \"-//CalSync//Availability//EN\")" [ref=e198]
+                  - row "28 cal.add(\"version\", \"2.0\")" [ref=e199]:
+                    - cell [ref=e200] [cursor=pointer]
+                    - cell "28" [ref=e201] [cursor=pointer]
+                    - cell "cal.add(\"version\", \"2.0\")" [ref=e202]
+                  - row "29 cal.add(\"calscale\", \"GREGORIAN\")" [ref=e203]:
+                    - cell [ref=e204] [cursor=pointer]
+                    - cell "29" [ref=e205] [cursor=pointer]
+                    - cell "cal.add(\"calscale\", \"GREGORIAN\")" [ref=e206]
+                  - row "30 cal[\"x-wr-calname\"] = vText(\"Availability\")" [ref=e207]:
+                    - cell [ref=e208] [cursor=pointer]
+                    - cell "30" [ref=e209] [cursor=pointer]
+                    - cell "cal[\"x-wr-calname\"] = vText(\"Availability\")" [ref=e210]
+                  - row "31" [ref=e211]:
+                    - cell [ref=e212] [cursor=pointer]
+                    - cell "31" [ref=e213] [cursor=pointer]
+                    - cell [ref=e214]
+                  - row "32 for block in busy_blocks:" [ref=e215]:
+                    - cell [ref=e216] [cursor=pointer]
+                    - cell "32" [ref=e217] [cursor=pointer]
+                    - cell "for block in busy_blocks:" [ref=e218]
+                  - row "33 event = Event()" [ref=e219]:
+                    - cell [ref=e220] [cursor=pointer]
+                    - cell "33" [ref=e221] [cursor=pointer]
+                    - cell "event = Event()" [ref=e222]
+                  - row "34 uid = _stable_uid(block.start, block.end)" [ref=e223]:
+                    - cell [ref=e224] [cursor=pointer]
+                    - cell "34" [ref=e225] [cursor=pointer]
+                    - cell "uid = _stable_uid(block.start, block.end)" [ref=e226]
+                  - row "35 event.add(\"uid\", uid)" [ref=e227]:
+                    - cell [ref=e228] [cursor=pointer]
+                    - cell "35" [ref=e229] [cursor=pointer]
+                    - cell "event.add(\"uid\", uid)" [ref=e230]
+                  - row "36 event.add(\"dtstamp\", datetime.now(UTC))" [ref=e231]:
+                    - cell [ref=e232] [cursor=pointer]
+                    - cell "36" [ref=e233] [cursor=pointer]
+                    - cell "event.add(\"dtstamp\", datetime.now(UTC))" [ref=e234]
+                  - row "37 event.add(\"dtstart\", block.start)" [ref=e235]:
+                    - cell [ref=e236] [cursor=pointer]
+                    - cell "37" [ref=e237] [cursor=pointer]
+                    - cell "event.add(\"dtstart\", block.start)" [ref=e238]
+                  - row "38 event.add(\"dtend\", block.end)" [ref=e239]:
+                    - cell [ref=e240] [cursor=pointer]
+                    - cell "38" [ref=e241] [cursor=pointer]
+                    - cell "event.add(\"dtend\", block.end)" [ref=e242]
+                  - row "39 event.add(\"summary\", \"Busy\")" [ref=e243]:
+                    - cell [ref=e244] [cursor=pointer]
+                    - cell "39" [ref=e245] [cursor=pointer]
+                    - cell "event.add(\"summary\", \"Busy\")" [ref=e246]
+                  - row "40 event.add(\"transp\", \"OPAQUE\")" [ref=e247]:
+                    - cell [ref=e248] [cursor=pointer]
+                    - cell "40" [ref=e249] [cursor=pointer]
+                    - cell "event.add(\"transp\", \"OPAQUE\")" [ref=e250]
+                  - row "41 cal.add_component(event)" [ref=e251]:
+                    - cell [ref=e252] [cursor=pointer]
+                    - cell "41" [ref=e253] [cursor=pointer]
+                    - cell "cal.add_component(event)" [ref=e254]
+                  - row "42" [ref=e255]:
+                    - cell [ref=e256] [cursor=pointer]
+                    - cell "42" [ref=e257] [cursor=pointer]
+                    - cell [ref=e258]
+                  - row "43 self._file_path.parent.mkdir(parents=True, exist_ok=True)" [ref=e259]:
+                    - cell [ref=e260] [cursor=pointer]
+                    - cell "43" [ref=e261] [cursor=pointer]
+                    - cell "self._file_path.parent.mkdir(parents=True, exist_ok=True)" [ref=e262]
+                  - row "44 self._file_path.write_bytes(cal.to_ical())" [ref=e263]:
+                    - cell [ref=e264] [cursor=pointer]
+                    - cell "44" [ref=e265] [cursor=pointer]
+                    - cell "self._file_path.write_bytes(cal.to_ical())" [ref=e266]
+                  - row "45" [ref=e267]:
+                    - cell [ref=e268] [cursor=pointer]
+                    - cell "45" [ref=e269] [cursor=pointer]
+                    - cell [ref=e270]
+                  - row "46 log.info(\"availability_published\", path=str(self._file_path), blocks=len(busy_blocks))" [ref=e271]:
+                    - cell [ref=e272] [cursor=pointer]
+                    - cell "46" [ref=e273] [cursor=pointer]
+                    - cell "log.info(\"availability_published\", path=str(self._file_path), blocks=len(busy_blocks))" [ref=e274]
+                  - row "47" [ref=e275]:
+                    - cell [ref=e276] [cursor=pointer]
+                    - cell "47" [ref=e277] [cursor=pointer]
+                    - cell [ref=e278]
+                  - row "48" [ref=e279]:
+                    - cell [ref=e280] [cursor=pointer]
+                    - cell "48" [ref=e281] [cursor=pointer]
+                    - cell [ref=e282]
+                  - 'row "49 def _stable_uid(start: datetime, end: datetime) -> str:" [ref=e283]':
+                    - cell [ref=e284] [cursor=pointer]
+                    - cell "49" [ref=e285] [cursor=pointer]
+                    - 'cell "def _stable_uid(start: datetime, end: datetime) -> str:" [ref=e286]'
+                  - row "50 \"\"\"Return a stable SHA-256-based UID for a busy block.\"\"\"" [ref=e287]:
+                    - cell [ref=e288] [cursor=pointer]
+                    - cell "50" [ref=e289] [cursor=pointer]
+                    - cell "\"\"\"Return a stable SHA-256-based UID for a busy block.\"\"\"" [ref=e290]
+                  - 'row "51 key = f\"{start.isoformat()}|{end.isoformat()}\"" [ref=e291]':
+                    - cell [ref=e292] [cursor=pointer]
+                    - cell "51" [ref=e293] [cursor=pointer]
+                    - 'cell "key = f\"{start.isoformat()}|{end.isoformat()}\"" [ref=e294]'
+                  - row "52 return hashlib.sha256(key.encode()).hexdigest() + \"@calsync\"" [ref=e295]:
+                    - cell [ref=e296] [cursor=pointer]
+                    - cell "52" [ref=e297] [cursor=pointer]
+                    - cell "return hashlib.sha256(key.encode()).hexdigest() + \"@calsync\"" [ref=e298]
+        - generic [ref=e300]:
+          - generic [ref=e301]: Loading narration...
+          - generic [ref=e302]:
+            - button "▶ Play" [disabled] [ref=e303]
+            - button "↺ Replay" [disabled] [ref=e304]
+            - button "⏭ Skip" [disabled] [ref=e305]
+            - generic [ref=e306]: Audio unavailable (using silent stub in dev)
+            - generic [ref=e307]: c1
+      - complementary [ref=e308]:
+        - generic [ref=e309]:
+          - generic [ref=e310]:
+            - button "Highlights" [ref=e311] [cursor=pointer]
+            - button "Related" [ref=e312] [cursor=pointer]
+            - button "Concerns" [ref=e313] [cursor=pointer]
+            - button "Look" [ref=e314] [cursor=pointer]
+          - generic [ref=e316]: No data yet
+      - generic [ref=e319]:
+        - textbox "Ask a follow-up question… (Enter to send)" [ref=e320]
+        - button "Ask" [disabled] [ref=e321]
+        - button "🎙" [ref=e322] [cursor=pointer]
+    - generic [ref=e324]:
+      - generic [ref=e325]: Flags (0)
+      - generic [ref=e326]: No flags yet. Add one from Concerns tab.

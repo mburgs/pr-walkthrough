@@ -213,15 +213,24 @@ class TestStructuredOutputValidation:
 
     @pytest.mark.asyncio
     async def test_plan_tour_valid_response(self, pr, diff, plan):
-        """Mock a valid tool response and verify TourPlan is returned."""
+        """Mock the lean tool response and verify TourPlan is reconstituted."""
         adapter = ClaudeLLMAdapter(api_key="test-key")
 
-        # Build a raw dict that matches what Claude would return
-        raw_plan = plan.model_dump(mode="json")
-        # Replace session_id with PENDING (what Claude returns)
-        raw_plan["session_id"] = "PENDING"
+        # Lean schema: per-chunk hunk_ids referencing the input diff list
+        lean_chunks = []
+        cursor = 0
+        for c in plan.chunks:
+            n = len(c.hunks)
+            lean_chunks.append({
+                "chunk_id": c.chunk_id,
+                "hunk_ids": list(range(cursor, cursor + n)),
+                "summary": c.summary,
+                "rationale_for_position": c.rationale_for_position,
+                "est_concern_level": c.est_concern_level,
+            })
+            cursor += n
 
-        mock_response = _make_mock_response("emit_tour_plan", raw_plan)
+        mock_response = _make_mock_response("emit_tour_plan", {"chunks": lean_chunks})
 
         with patch.object(
             adapter._client.messages,
@@ -232,6 +241,8 @@ class TestStructuredOutputValidation:
 
         assert isinstance(result, TourPlan)
         assert len(result.chunks) == 3
+        # Hunks were reconstituted from the input diff, not echoed by the LLM
+        assert sum(len(c.hunks) for c in result.chunks) == len(diff)
         assert result.chunks[0].chunk_id == "c1"
 
     @pytest.mark.asyncio
@@ -280,8 +291,8 @@ class TestStructuredOutputValidation:
         """A missing required field in Claude's output must raise ValueError."""
         adapter = ClaudeLLMAdapter(api_key="test-key")
 
-        # Missing 'chunks' key
-        bad_raw = {"session_id": "x", "pr": {}}
+        # Empty chunks → reconstitute should reject
+        bad_raw = {"chunks": []}
         mock_response = _make_mock_response("emit_tour_plan", bad_raw)
 
         with pytest.raises((ValueError, Exception)):

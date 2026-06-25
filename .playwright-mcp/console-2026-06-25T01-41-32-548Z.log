@@ -1,0 +1,28 @@
+[  336816ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5180/@vite/client:992
+[  337079ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:14335
+[ 2507345ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5180/@vite/client:992
+[ 2507496ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:14335
+[ 3481073ms] [WARNING] syntax highlight failed for python TypeError: Invalid attempt to iterate non-iterable instance.
+In order to be iterable, non-array objects must have a [Symbol.iterator]() method.
+    at _createForOfIteratorHelper (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:135:9)
+    at treeToPathList (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:1961:26)
+    at normalizeToLines (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:1987:26)
+    at tokenize (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:2652:361)
+    at http://localhost:5180/src/components/DiffViewer.tsx?t=1782355173551:116:16
+    at Array.map (<anonymous>)
+    at http://localhost:5180/src/components/DiffViewer.tsx?t=1782355173551:111:23
+    at Array.map (<anonymous>)
+    at DiffViewer (http://localhost:5180/src/components/DiffViewer.tsx?t=1782355173551:95:40)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12) @ http://localhost:5180/@vite/client:524
+[ 3481075ms] [WARNING] syntax highlight failed for python TypeError: Invalid attempt to iterate non-iterable instance.
+In order to be iterable, non-array objects must have a [Symbol.iterator]() method.
+    at _createForOfIteratorHelper (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:135:9)
+    at treeToPathList (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:1961:26)
+    at normalizeToLines (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:1987:26)
+    at tokenize (http://localhost:5180/node_modules/.vite/deps/react-diff-view.js?v=6fd7071d:2652:361)
+    at http://localhost:5180/src/components/DiffViewer.tsx?t=1782355173551:116:16
+    at Array.map (<anonymous>)
+    at http://localhost:5180/src/components/DiffViewer.tsx?t=1782355173551:111:23
+    at Array.map (<anonymous>)
+    at DiffViewer (http://localhost:5180/src/components/DiffViewer.tsx?t=1782355173551:95:40)
+    at Object.react_stack_bottom_frame (http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=6fd7071d:12866:12) @ http://localhost:5180/@vite/client:524

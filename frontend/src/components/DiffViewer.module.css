@@ -1,83 +1,213 @@
 .container {
   font-family: var(--font-mono);
-  font-size: 12px;
-  line-height: 1.5;
+  font-size: 12.5px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+/* ---------- File card ---------- */
+
+.file {
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  background: var(--bg-tinted);
+  overflow: hidden;
 }
 
 .fileHeader {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: var(--radius) var(--radius) 0 0;
-  padding: 6px 12px;
-  font-size: 12px;
-  color: var(--text-muted);
   display: flex;
   align-items: center;
   gap: 8px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border-soft);
+  padding: 7px 12px;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.fileIcon {
+  color: var(--text-dim);
+  font-size: 13px;
+  line-height: 1;
 }
 
 .fileName {
-  color: var(--text);
   font-family: var(--font-mono);
+  color: var(--text);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  flex: 1;
+  min-width: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.fileType {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-dim);
+  background: var(--surface-2);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+.langBadge {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+  background: var(--accent-muted);
+  padding: 1px 6px;
+  border-radius: 999px;
+  letter-spacing: -0.005em;
+}
+
+/* ---------- Diff table ---------- */
+
+.diffWrap {
+  overflow-x: auto;
 }
 
 .diffTable {
   width: 100%;
   border-collapse: collapse;
-  border: 1px solid var(--border);
-  border-radius: 0 0 var(--radius) var(--radius);
-  overflow: hidden;
-  margin-bottom: 16px;
+  background: var(--bg-tinted);
+  /* Beat react-diff-view's defaults (which apply pale rgb backgrounds) */
 }
 
+/* Generic cells */
 .diffTable :global(.diff-gutter) {
-  width: 40px;
-  min-width: 40px;
-  padding: 0 8px;
-  background: var(--surface);
-  color: var(--text-muted);
+  width: 44px !important;
+  min-width: 44px;
+  padding: 0 8px !important;
+  background: var(--diff-gutter-bg) !important;
+  color: var(--text-dim) !important;
   text-align: right;
   user-select: none;
-  font-size: 11px;
-  border-right: 1px solid var(--border);
+  font-family: var(--font-mono) !important;
+  font-size: 11px !important;
+  border-right: 1px solid var(--border-soft);
 }
 
 .diffTable :global(.diff-code) {
-  padding: 0 8px;
-  white-space: pre;
+  padding: 2px 14px !important;
+  white-space: pre !important;
+  color: var(--text) !important;
+  font-family: var(--font-mono) !important;
+  font-size: 12.5px !important;
+  line-height: 1.55 !important;
+  background: transparent !important;
 }
 
-.diffTable :global(.diff-line-add) :global(.diff-gutter) {
-  background: rgba(14, 68, 41, 0.4);
+/* Inserted lines (react-diff-view uses *-insert) */
+.diffTable :global(.diff-gutter-insert) {
+  background: var(--diff-add-bg) !important;
+  color: var(--diff-add-marker) !important;
+  border-left: 2px solid var(--diff-add-marker);
+  padding-left: 6px !important;
 }
-.diffTable :global(.diff-line-add) :global(.diff-code) {
-  background: var(--add);
-  color: var(--add-text);
+.diffTable :global(.diff-code-insert) {
+  background: var(--diff-add-bg) !important;
+  color: var(--text) !important;
+}
+.diffTable :global(.diff-code-insert)::before {
+  content: "+";
+  color: var(--diff-add-marker);
+  font-weight: 700;
+  margin-right: 8px;
+  display: inline-block;
+  width: 8px;
 }
 
-.diffTable :global(.diff-line-delete) :global(.diff-gutter) {
-  background: rgba(74, 11, 11, 0.4);
+/* Deleted lines */
+.diffTable :global(.diff-gutter-delete) {
+  background: var(--diff-del-bg) !important;
+  color: var(--diff-del-marker) !important;
+  border-left: 2px solid var(--diff-del-marker);
+  padding-left: 6px !important;
 }
-.diffTable :global(.diff-line-delete) :global(.diff-code) {
-  background: var(--del);
-  color: var(--del-text);
+.diffTable :global(.diff-code-delete) {
+  background: var(--diff-del-bg) !important;
+  color: var(--text) !important;
+}
+.diffTable :global(.diff-code-delete)::before {
+  content: "−";
+  color: var(--diff-del-marker);
+  font-weight: 700;
+  margin-right: 8px;
+  display: inline-block;
+  width: 8px;
 }
 
-.diffTable :global(.diff-line-normal) :global(.diff-code) {
-  color: var(--text);
+/* Normal lines */
+.diffTable :global(.diff-code-normal) {
+  background: transparent !important;
+  color: var(--text) !important;
+}
+.diffTable :global(.diff-code-normal)::before {
+  content: " ";
+  margin-right: 8px;
+  display: inline-block;
+  width: 8px;
 }
 
+/* Word-level diff highlights (the inline emphasised changes) */
+.diffTable :global(.diff-code-edit-insert) {
+  background: var(--diff-add-tint) !important;
+  border-radius: 2px;
+  padding: 0 2px;
+}
+.diffTable :global(.diff-code-edit-delete) {
+  background: var(--diff-del-tint) !important;
+  border-radius: 2px;
+  padding: 0 2px;
+  text-decoration: line-through;
+}
+
+/* Hunk header (@@ line) */
+.diffTable :global(.diff-decoration),
 .diffTable :global(.diff-hunk-header) {
-  background: rgba(56,139,253,0.07);
-  color: var(--accent);
-  font-size: 11px;
-  padding: 2px 12px;
+  background: var(--diff-hunk-bg) !important;
 }
+.diffTable :global(.diff-decoration-content),
+.diffTable :global(.diff-hunk-header-content) {
+  color: var(--info) !important;
+  font-size: 11px !important;
+  padding: 4px 14px !important;
+  border-top: 1px solid var(--border-soft);
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--diff-hunk-bg) !important;
+}
+.diffTable :global(.diff-decoration-gutter),
+.diffTable :global(.diff-hunk-header-gutter) {
+  background: var(--diff-hunk-bg) !important;
+  border-right: 1px solid var(--border-soft);
+}
+
+/* Row hover */
+.diffTable :global(tr:hover) :global(.diff-code-normal) {
+  background: rgba(255, 255, 255, 0.025) !important;
+}
+
+/* ---------- Empty / fallback ---------- */
 
 .noHunks {
-  color: var(--text-muted);
+  color: var(--text-dim);
   font-size: 13px;
-  padding: 24px 0;
+  padding: 36px 0;
   text-align: center;
+  font-family: var(--font-sans);
+}
+
+.fallback {
+  padding: 12px;
+  font-size: 12px;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  white-space: pre-wrap;
+  overflow-x: auto;
+  line-height: 1.5;
 }

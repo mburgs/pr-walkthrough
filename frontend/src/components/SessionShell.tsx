@@ -1,62 +1,80 @@
-
+import { useState } from "react";
 import { useSession } from "../contexts/SessionContext";
 import ChunkList from "./ChunkList";
 import DiffViewer from "./DiffViewer";
-import NarrationPlayer from "./NarrationPlayer";
-import SidePanel from "./SidePanel";
+import RightRail from "./RightRail";
 import FollowUpInput from "./FollowUpInput";
 import styles from "./SessionShell.module.css";
 
 export default function SessionShell() {
   const { session, currentChunkId, currentNarration, narrationLoading } = useSession();
+  const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [rightCollapsed, setRightCollapsed] = useState(false);
 
   if (!session) return null;
 
-  const currentChunk = session.plan.chunks.find((c) => c.chunk_id === currentChunkId) ?? null;
+  const currentChunk =
+    session.plan.chunks.find((c) => c.chunk_id === currentChunkId) ?? null;
+
+  const shellClass = [
+    styles.shell,
+    leftCollapsed ? styles.leftCollapsed : "",
+    rightCollapsed ? styles.rightCollapsed : "",
+  ].filter(Boolean).join(" ");
 
   return (
-    <div className={styles.shell}>
-      {/* Left: chunk list */}
+    <div className={shellClass}>
       <aside className={styles.sidebar}>
         <div className={styles.sidebarHeader}>
-          <div className={styles.prTitle} title={session.plan.pr.title}>
-            {session.plan.pr.title}
+          <div className={styles.sidebarHeaderMain}>
+            <div className={styles.prTitle} title={session.plan.pr.title}>
+              {session.plan.pr.title}
+            </div>
+            <div className={styles.prMeta}>
+              {session.plan.pr.repo} · #{session.plan.pr.number}
+            </div>
           </div>
-          <div className={styles.prMeta}>
-            #{session.plan.pr.number} · {session.plan.pr.author} · {session.plan.pr.repo}
-          </div>
+          <button
+            className={styles.collapseBtn}
+            onClick={() => setLeftCollapsed(true)}
+            title="Collapse chunk list"
+            aria-label="Collapse chunk list"
+          >‹</button>
         </div>
+        {leftCollapsed && (
+          <button
+            className={styles.collapseBtn}
+            onClick={() => setLeftCollapsed(false)}
+            title="Expand chunk list"
+            aria-label="Expand chunk list"
+            style={{ margin: "10px auto 4px" }}
+          >›</button>
+        )}
         <div className={styles.chunkList}>
-          <ChunkList />
+          <ChunkList compact={leftCollapsed} />
         </div>
       </aside>
 
-      {/* Center: diff + narration */}
       <main className={styles.center}>
         <div className={styles.diffArea}>
           {currentChunk ? (
-            <DiffViewer chunk={currentChunk} narration={currentNarration} />
+            <DiffViewer chunk={currentChunk} />
           ) : (
-            <div style={{ color: "var(--text-muted)", padding: 16 }}>Select a chunk to begin.</div>
-          )}
-        </div>
-        <div className={styles.narrationArea}>
-          {currentChunk && (
-            <NarrationPlayer
-              chunk={currentChunk}
-              narration={currentNarration}
-              loading={narrationLoading}
-            />
+            <div className={styles.emptyCenter}>Select a chunk to begin.</div>
           )}
         </div>
       </main>
 
-      {/* Right: side panel */}
       <aside className={styles.rightPanel}>
-        <SidePanel narration={currentNarration} />
+        <RightRail
+          chunk={currentChunk}
+          narration={currentNarration}
+          narrationLoading={narrationLoading}
+          collapsed={rightCollapsed}
+          onToggle={() => setRightCollapsed((v) => !v)}
+        />
       </aside>
 
-      {/* Bottom: follow-up bar */}
       <div className={styles.followUpBar}>
         <FollowUpInput />
       </div>

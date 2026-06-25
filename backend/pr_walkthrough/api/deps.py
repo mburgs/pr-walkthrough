@@ -19,8 +19,15 @@ _app_context: "AppContext | None" = None
 def get_app_context() -> "AppContext":
     global _app_context
     if _app_context is None:
+        import os
+        from pathlib import Path
         from pr_walkthrough.orchestration import AppContext
-        _app_context = AppContext()
+
+        # Allow the user to point context retrieval at a cloned repo without
+        # having to edit code. Useful when running the demo against a real PR
+        # whose codebase sits outside the orchestrator's own cwd.
+        repo_root = Path(os.environ.get("PR_WALKTHROUGH_REPO_ROOT", "."))
+        _app_context = AppContext(repo_root=repo_root)
     return _app_context
 
 

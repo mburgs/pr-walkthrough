@@ -1,0 +1,100 @@
+[     213ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=0d8e3ed2:14335
+[   18002ms] [ERROR] In HTML, %s cannot be a child of <%s>.%s
+This will cause a hydration error.%s <table> tbody  
+
+  ...
+    <SessionProvider>
+      <AppContent>
+        <div style={{display:"flex", ...}}>
+          <header>
+          <div style={{flex:1, ...}}>
+            <div style={{flex:1, ...}}>
+              <SessionShell>
+                <div className="_shell_1yb...">
+                  <aside>
+                  <main className="_center_1y...">
+                    <div className="_diffArea_...">
+                      <DiffViewer chunk={{chunk_id:"c1", ...}} narration={null}>
+                        <div className="_container...">
+                          <div>
+                            <div>
+                            <table className="_diffTable...">
+>                             <tbody>
+                                <Diff viewType="unified" diffType="modify" hunks={[...]}>
+>                                 <table ref={{current:null}} className="diff diff-unified" onMouseDown={function noop}>
+                    ...
+                  ...
+            ...
+ @ http://localhost:5180/@vite/client:524
+[   18005ms] [ERROR] <%s> cannot contain a nested %s.
+See this log for the ancestor stack trace. tbody <table> @ http://localhost:5180/@vite/client:524
+[  370875ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/components/SessionShell.tsx?t=1782348654390:0
+[  370876ms] [ERROR] [vite] Failed to reload /src/components/SessionShell.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[  398276ms] [LOG] [vite] server connection lost. Polling for restart... @ http://localhost:5180/@vite/client:992
+[  398480ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/components/SessionShell.tsx?t=1782348654390:0
+[  399371ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/components/SessionShell.tsx?t=1782348682890:0
+[ 2837795ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/components/SessionShell.tsx?t=1782351121179:0
+[ 2881646ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/components/RightRail.tsx:0
+[ 2919511ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=0d8e3ed2:14335
+[ 2919592ms] [ERROR] In HTML, %s cannot be a child of <%s>.%s
+This will cause a hydration error.%s <table> tbody  
+
+  ...
+    <SessionProvider>
+      <AppContent>
+        <div style={{display:"flex", ...}}>
+          <header>
+          <div style={{flex:1, ...}}>
+            <div style={{flex:1, ...}}>
+              <SessionShell>
+                <div className="_shell_9ng...">
+                  <aside>
+                  <main className="_center_9n...">
+                    <div className="_diffArea_...">
+                      <DiffViewer chunk={{chunk_id:"c1", ...}}>
+                        <div className="_container...">
+                          <div>
+                            <div>
+                            <table className="_diffTable...">
+>                             <tbody>
+                                <Diff viewType="unified" diffType="modify" hunks={[...]}>
+>                                 <table ref={{current:null}} className="diff diff-unified" onMouseDown={function noop}>
+                  ...
+            ...
+ @ http://localhost:5180/@vite/client:524
+[ 2919592ms] [ERROR] <%s> cannot contain a nested %s.
+See this log for the ancestor stack trace. tbody <table> @ http://localhost:5180/@vite/client:524
+[ 2936193ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/App.tsx?t=1782351219750:0
+[ 2936193ms] [ERROR] [vite] Failed to reload /src/App.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[ 2954281ms] [INFO] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold @ http://localhost:5180/node_modules/.vite/deps/react-dom_client.js?v=0d8e3ed2:14335
+[ 2954303ms] [ERROR] In HTML, %s cannot be a child of <%s>.%s
+This will cause a hydration error.%s <table> tbody  
+
+  ...
+    <App>
+      <SessionProvider>
+        <AppContent>
+          <div className="_app_8o3n3_1">
+            <header>
+            <main className="_body_8o3n...">
+              <SessionShell>
+                <div className="_shell_9ng...">
+                  <aside>
+                  <main className="_center_9n...">
+                    <div className="_diffArea_...">
+                      <DiffViewer chunk={{chunk_id:"c1", ...}}>
+                        <div className="_container...">
+                          <div>
+                            <div>
+                            <table className="_diffTable...">
+>                             <tbody>
+                                <Diff viewType="unified" diffType="modify" hunks={[...]}>
+>                                 <table ref={{current:null}} className="diff diff-unified" onMouseDown={function noop}>
+                  ...
+ @ http://localhost:5180/@vite/client:524
+[ 2954303ms] [ERROR] <%s> cannot contain a nested %s.
+See this log for the ancestor stack trace. tbody <table> @ http://localhost:5180/@vite/client:524
+[ 2978231ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/components/DiffViewer.tsx?t=1782351261789:0
+[ 2978231ms] [ERROR] [vite] Failed to reload /src/components/DiffViewer.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524
+[ 3004458ms] [ERROR] Failed to load resource: the server responded with a status of 500 (Internal Server Error) @ http://localhost:5180/src/components/DiffViewer.tsx?t=1782351288016:0
+[ 3004458ms] [ERROR] [vite] Failed to reload /src/components/SessionShell.tsx. This could be due to syntax errors or importing non-existent modules. (see errors above) @ http://localhost:5180/@vite/client:524

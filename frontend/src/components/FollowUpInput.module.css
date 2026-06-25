@@ -18,97 +18,88 @@
   color: var(--text);
   font: inherit;
   font-size: 13px;
-  padding: 8px 12px;
+  padding: 8px 14px;
   outline: none;
-  transition: border-color 0.1s;
+  transition: border-color 120ms, box-shadow 120ms;
 }
-
 .input:focus {
   border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-muted);
 }
-
 .input::placeholder {
-  color: var(--text-muted);
+  color: var(--text-dim);
 }
 
 .btn {
   background: var(--accent);
   border: none;
   border-radius: var(--radius);
-  color: #fff;
-  padding: 8px 14px;
+  color: var(--accent-text);
+  padding: 8px 16px;
   font-size: 13px;
   font-weight: 600;
-  transition: background 0.1s;
+  letter-spacing: -0.005em;
+  transition: filter 120ms;
 }
-
-.btn:hover:not(:disabled) {
-  background: var(--accent-hover);
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
+.btn:hover:not(:disabled) { filter: brightness(1.08); }
+.btn:disabled { opacity: 0.4; cursor: default; }
 
 .micBtn {
-  background: none;
+  background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   color: var(--text-muted);
   padding: 8px 12px;
-  font-size: 16px;
-  transition: color 0.1s, border-color 0.1s, background 0.1s;
+  font-size: 14px;
+  transition: color 120ms, border-color 120ms, background 120ms;
 }
-
 .micBtn:hover:not(:disabled) {
   color: var(--text);
   border-color: var(--accent);
 }
-
 .micBtn.recording {
   color: var(--danger);
   border-color: var(--danger);
-  background: rgba(248,81,73,0.1);
+  background: rgba(255, 107, 107, 0.10);
+  animation: micPulse 1.2s infinite;
 }
+.micBtn:disabled { opacity: 0.3; cursor: default; }
 
-.micBtn:disabled {
-  opacity: 0.3;
-  cursor: default;
+@keyframes micPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(255, 107, 107, 0.35); }
+  50%      { box-shadow: 0 0 0 6px rgba(255, 107, 107, 0); }
 }
 
 .answer {
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--bg-tinted);
+  border: 1px solid var(--border-soft);
   border-radius: var(--radius);
-  padding: 10px 12px;
+  padding: 10px 14px;
 }
-
 .answerLabel {
-  font-size: 11px;
+  font-size: 10px;
   color: var(--accent);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.08em;
   margin-bottom: 4px;
+  font-family: var(--font-mono);
 }
-
 .answerText {
   font-size: 13px;
   color: var(--text);
-  line-height: 1.6;
+  line-height: 1.55;
 }
-
 .newConcerns {
-  margin-top: 8px;
+  margin-top: 10px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
 }
-
 .newConcern {
   font-size: 12px;
   color: var(--warn);
   border-left: 2px solid var(--warn);
-  padding-left: 8px;
+  padding-left: 9px;
+  line-height: 1.5;
 }

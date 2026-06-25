@@ -12,8 +12,9 @@ import logging
 import sys
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from pr_walkthrough.api import deps
 from pr_walkthrough.api.sessions import router as sessions_router
@@ -46,6 +47,18 @@ app.include_router(chunks_router)
 app.include_router(follow_ups_router)
 app.include_router(flags_router)
 app.include_router(events_router)
+
+
+@app.exception_handler(Exception)
+async def _unhandled(request: Request, exc: Exception) -> JSONResponse:
+    """Return 500 as a normal response so CORSMiddleware adds its headers.
+
+    Without this, Starlette's ServerErrorMiddleware sits outside the CORS
+    middleware and bare 500s reach the browser with no Access-Control-Allow-Origin —
+    which surfaces as a confusing CORS error instead of the real exception.
+    """
+    logging.getLogger("pr_walkthrough").exception("unhandled exception on %s", request.url.path)
+    return JSONResponse(status_code=500, content={"detail": f"{type(exc).__name__}: {exc}"})
 
 
 @app.on_event("startup")
