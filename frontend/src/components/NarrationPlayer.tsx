@@ -49,6 +49,11 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   const [variantOffsets, setVariantOffsets] = useState<number[]>([]);
   const [variantLoading, setVariantLoading] = useState(false);
 
+  // Client-side cache so already-loaded variants switch instantly (no refetch,
+  // no blob recreate, no audio element reload). Keyed by `${chunk}/${engine}/${filtered}`.
+  const variantCache = useRef<Map<string, { blobUrl: string; offsetsMs: number[] }>>(new Map());
+  const variantKey = (cid: string, eng: string, filt: boolean) => `${cid}/${eng}/${filt}`;
+
   // Discover which engines the backend can offer (once per chunk)
   useEffect(() => {
     if (!session) return;
@@ -59,22 +64,33 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     return () => { cancelled = true; };
   }, [session, chunk.chunk_id]);
 
-  // Load the requested variant whenever engine / filter / chunk changes
+  // Load the requested variant whenever engine / filter / chunk changes.
+  // Cache hits switch instantly; misses kick off a fetch.
   useEffect(() => {
     if (!session || !narration) return;
     let cancelled = false;
+
+    const key = variantKey(chunk.chunk_id, engine, filtered);
+    const cached = variantCache.current.get(key);
+    if (cached) {
+      setError(null);
+      setVariantLoading(false);
+      setVariantUrl(cached.blobUrl);
+      setVariantOffsets(cached.offsetsMs.length ? cached.offsetsMs : (narration.segment_offsets_ms ?? []));
+      return;
+    }
+
     setVariantLoading(true);
     setError(null);
-    // Revoke previous blob URL to avoid leaks
-    setVariantUrl(prev => { if (prev?.startsWith("blob:")) URL.revokeObjectURL(prev); return null; });
+    // Keep the old src playing while we fetch the new one — feels less jarring
+    // than going silent. The audio element only resets when the src actually changes.
 
     fetchVariant(session.plan.session_id, chunk.chunk_id, engine, filtered)
       .then(v => {
         if (cancelled) return;
         if (!v) { setError(`Failed to load ${engine} (${filtered ? "filtered" : "raw"})`); return; }
+        variantCache.current.set(key, v);
         setVariantUrl(v.blobUrl);
-        // Fall back to the narration's offsets when the header was empty
-        // (older default-variant rows don't include offsets per-engine).
         setVariantOffsets(v.offsetsMs.length ? v.offsetsMs : (narration.segment_offsets_ms ?? []));
       })
       .catch(e => { if (!cancelled) setError(String(e)); })
@@ -82,6 +98,15 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
 
     return () => { cancelled = true; };
   }, [session, narration, chunk.chunk_id, engine, filtered]);
+
+  // Free blob URLs when this player unmounts (e.g. switching chunks).
+  useEffect(() => {
+    const cache = variantCache.current;
+    return () => {
+      cache.forEach(v => URL.revokeObjectURL(v.blobUrl));
+      cache.clear();
+    };
+  }, [chunk.chunk_id]);
 
   // Persist switcher choices
   useEffect(() => { localStorage.setItem(ENGINE_STORAGE_KEY, engine); }, [engine]);
