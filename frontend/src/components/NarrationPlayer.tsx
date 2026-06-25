@@ -30,11 +30,13 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     ? getAudioUrl(session.plan.session_id, chunk.chunk_id)
     : null;
 
-  // Apply rate to the live audio element and persist
+  // Apply rate to the live audio element and persist.
+  // Depend on audioUrl too: HTMLAudioElement resets playbackRate to 1 when
+  // src changes, so we re-assert the user's speed on every chunk swap.
   useEffect(() => {
     if (audioRef.current) audioRef.current.playbackRate = rate;
     localStorage.setItem(SPEED_STORAGE_KEY, String(rate));
-  }, [rate]);
+  }, [rate, audioUrl]);
 
   const cycleRate = () => {
     const i = SPEEDS.indexOf(rate as (typeof SPEEDS)[number]);
