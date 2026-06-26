@@ -71,10 +71,14 @@
 }
 
 .diffTable {
-  /* `min-width: 100%` (not `width: 100%`) so cells can push the table wider
-   * than the wrapper when a line is long. With `width: 100%` the table is
-   * pinned to the wrapper width and long lines clip off-screen — the scrollbar
-   * appears but never actually scrolls beyond the visible region. */
+  /* react-diff-view's `.diff` rule applies `table-layout: fixed; width: 100%`,
+   * which freezes column widths to table_width / column_count and *ignores*
+   * cell content. Long lines then clip at the right edge no matter what
+   * `white-space` / `overflow` we set on the cell. Switch back to `auto`
+   * layout and `min-width: 100%` so the table sizes from cell content; the
+   * .diffWrap parent's `overflow-x: auto` then provides a real scrollbar. */
+  table-layout: auto !important;
+  width: auto !important;
   min-width: 100%;
   border-collapse: collapse;
   background: var(--bg-tinted);
