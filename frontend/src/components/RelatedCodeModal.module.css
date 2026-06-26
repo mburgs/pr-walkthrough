@@ -126,6 +126,12 @@
   align-items: flex-start;
   padding: 0 14px 0 0;
   border-left: 3px solid transparent;
+  /* `max-content` lets the row push the .fileView wider than the viewport
+   * when text is long, so the parent's overflow-x scrollbar tracks real
+   * content. `min-width: 100%` keeps short lines edge-to-edge so the active
+   * highlight rail still spans the full visible width. */
+  width: max-content;
+  min-width: 100%;
 }
 .lineActive {
   background: rgba(124, 156, 255, 0.10);
@@ -143,7 +149,9 @@
 }
 
 .lineText {
-  flex: 1;
-  min-width: 0;
+  /* No `flex: 1; min-width: 0` — that would let the cell shrink below its
+   * content width and re-introduce the right-edge clip. The row's
+   * `width: max-content` already sizes us to the actual text. */
   white-space: pre;
+  flex: 0 0 auto;
 }
