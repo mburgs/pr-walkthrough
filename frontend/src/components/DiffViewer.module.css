@@ -71,10 +71,13 @@
 }
 
 .diffTable {
-  width: 100%;
+  /* `min-width: 100%` (not `width: 100%`) so cells can push the table wider
+   * than the wrapper when a line is long. With `width: 100%` the table is
+   * pinned to the wrapper width and long lines clip off-screen — the scrollbar
+   * appears but never actually scrolls beyond the visible region. */
+  min-width: 100%;
   border-collapse: collapse;
   background: var(--bg-tinted);
-  /* Beat react-diff-view's defaults (which apply pale rgb backgrounds) */
 }
 
 /* Generic cells */

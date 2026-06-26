@@ -168,10 +168,6 @@ pr-walkthrough/
 └── fixtures/               # canonical PR-shaped fixtures
 ```
 
-## Design notes
-
-[`STREAMS.md`](STREAMS.md) captures the 8-stream parallel-development decomposition the project started from, including the contracts that let frontend/backend/LLM/TTS/STT/PR teams iterate independently.
-
 ## Acknowledgements
 
 Diff rendering by [`react-diff-view`](https://github.com/otakustay/react-diff-view), syntax highlighting via [refractor](https://github.com/wooorm/refractor) (Prism). Local TTS by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M). Code intelligence by [Jedi](https://github.com/davidhalter/jedi). PR I/O via [GitHub CLI](https://cli.github.com/).
