@@ -2,9 +2,15 @@ import { createContext, useContext, useState, useCallback, useEffect } from "rea
 import type { SessionState, Flag, ChunkNarration, FamiliarityLevel, FollowUpAnswer } from "../contracts";
 import * as api from "../api/client";
 
+/** Coarse-grained state of the initial session load. Drives the
+ * staged loading screen so the reviewer can see *what* is happening
+ * during the multi-second LLM round-trips. */
+export type LoadingPhase = "idle" | "fetching_pr" | "planning_tour" | "setting_up";
+
 interface SessionContextValue {
   session: SessionState | null;
   loading: boolean;
+  loadingPhase: LoadingPhase;
   error: string | null;
   currentChunkId: string | null;
   currentNarration: ChunkNarration | null;
@@ -43,6 +49,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [narrationLoading, setNarrationLoading] = useState(false);
   const [flags, setFlags] = useState<Flag[]>([]);
   const [narrationGen, setNarrationGen] = useState<Record<string, number>>({});
+  const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>("idle");
   // The user-selected familiarity level. Initialised from plan.familiarity
   // when a session loads; the player exposes a switcher when plan.multi_level.
   const [activeLevel, setActiveLevel] = useState<FamiliarityLevel>("review");
@@ -96,8 +103,18 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     resetSessionState();
     setLoading(true);
     setError(null);
+    // POST /sessions is one round-trip from the client's perspective but
+    // the backend does (1) gh fetch then (2) Claude plan_tour. We don't
+    // have a real signal for the transition, so flip the indicator on a
+    // short timer — long enough that gh's typical sub-second latency is
+    // covered, short enough that the LLM phase shows for most of the wait.
+    setLoadingPhase("fetching_pr");
+    const phaseTimer = window.setTimeout(() => {
+      setLoadingPhase((p) => (p === "fetching_pr" ? "planning_tour" : p));
+    }, 1500);
     try {
       const plan = await api.createSession(prUrl, familiarity, multiLevel);
+      setLoadingPhase("setting_up");
       setActiveLevel(plan.familiarity ?? "review");
       const state = await api.getSession(plan.session_id);
       setSession(state);
@@ -116,6 +133,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     } catch (e) {
       setError(String(e));
     } finally {
+      window.clearTimeout(phaseTimer);
+      setLoadingPhase("idle");
       setLoading(false);
     }
   }, [resetSessionState]);
@@ -200,6 +219,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       value={{
         session,
         loading,
+        loadingPhase,
         error,
         currentChunkId,
         currentNarration,

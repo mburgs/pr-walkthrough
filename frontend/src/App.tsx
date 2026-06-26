@@ -3,6 +3,7 @@ import { SessionProvider, useSession } from "./contexts/SessionContext";
 import SessionShell from "./components/SessionShell";
 import { exportTranscript } from "./lib/exportTranscript";
 import type { FamiliarityLevel } from "./contracts";
+import type { LoadingPhase } from "./contexts/SessionContext";
 import styles from "./App.module.css";
 
 function readBootHints(): { sid?: string; prUrl?: string } {
@@ -13,7 +14,7 @@ function readBootHints(): { sid?: string; prUrl?: string } {
 }
 
 function AppContent() {
-  const { session, loading, error, initSession, resumeSession } = useSession();
+  const { session, loading, loadingPhase, error, initSession, resumeSession } = useSession();
   const [regenConfirm, setRegenConfirm] = useState(false);
   const [booted, setBooted] = useState(false);
   const regenTimerRef = useRef<number | null>(null);
@@ -55,10 +56,7 @@ function AppContent() {
   if (loading) {
     return (
       <div className={styles.fullCenter}>
-        <div className={styles.loadingMark}>
-          <span className={styles.dotPulse} />
-          <span className={styles.loadingText}>narrating pull request…</span>
-        </div>
+        <LoadingPhases phase={loadingPhase} />
       </div>
     );
   }
@@ -143,6 +141,38 @@ function AppContent() {
       <main className={styles.body}>
         <SessionShell />
       </main>
+    </div>
+  );
+}
+
+const LOADING_STAGES: { id: LoadingPhase; label: string }[] = [
+  { id: "fetching_pr",   label: "Fetching the PR diff" },
+  { id: "planning_tour", label: "Asking Claude to plan a tour" },
+  { id: "setting_up",    label: "Setting up your session" },
+];
+
+function LoadingPhases({ phase }: { phase: LoadingPhase }) {
+  const activeIdx = LOADING_STAGES.findIndex((s) => s.id === phase);
+  return (
+    <div className={styles.loadingPhases} aria-live="polite" aria-busy="true">
+      <div className={styles.loadingTitle}>preparing your walkthrough</div>
+      <ul className={styles.loadingStageList}>
+        {LOADING_STAGES.map((s, i) => {
+          const done = activeIdx > i;
+          const active = activeIdx === i;
+          return (
+            <li
+              key={s.id}
+              className={`${styles.loadingStage} ${active ? styles.loadingStageActive : ""} ${done ? styles.loadingStageDone : ""}`}
+            >
+              <span className={styles.loadingStageIcon} aria-hidden>
+                {done ? "✓" : active ? <span className={styles.dotPulse} /> : "○"}
+              </span>
+              <span className={styles.loadingStageLabel}>{s.label}</span>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

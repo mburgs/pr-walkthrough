@@ -109,8 +109,11 @@ async def process_chunk(
             except Exception:
                 log.warning("context retrieval failed for %s", chunk.chunk_id, exc_info=True)
 
-        # 3. Call LLM for narration
-        narration = await ctx.llm.narrate_chunk(plan, chunk, related)
+        # 3. Call LLM for narration. Gated by `llm_semaphore` so multi-level
+        # prefetch (which spawns up to 4 of these concurrently per chunk)
+        # doesn't churn through API rate limits.
+        async with ctx.llm_semaphore:
+            narration = await ctx.llm.narrate_chunk(plan, chunk, related)
 
         # 4. Emit a narration token event (in real impl would stream; here single shot)
         await publish(
@@ -131,20 +134,23 @@ async def process_chunk(
 
         # 7. Synthesise audio. Per-segment synth so we know each segment's
         # start offset in the final WAV (used to drive the diff highlight as
-        # audio plays).
-        if narration.segments:
-            audio, offsets_ms = await synth_segments_to_wav(
-                ctx.tts,
-                [tts_scrub(s.text) for s in narration.segments],
-            )
-            narration = narration.model_copy(update={"segment_offsets_ms": offsets_ms})
-            ctx.store.save_narration(session_id, narration, level=active_level)
-        else:
-            from pr_walkthrough.tts._wav import merge_synth_chunks
-            audio_chunks: list[bytes] = []
-            async for chunk_bytes in ctx.tts.synth(tts_scrub(narration.narration)):
-                audio_chunks.append(chunk_bytes)
-            audio = merge_synth_chunks(audio_chunks)
+        # audio plays). Gated by `tts_semaphore` because each kokoro call
+        # is ~200 MB resident + audio buffers — without throttling, four
+        # parallel multi-level synths would OOM small machines.
+        async with ctx.tts_semaphore:
+            if narration.segments:
+                audio, offsets_ms = await synth_segments_to_wav(
+                    ctx.tts,
+                    [tts_scrub(s.text) for s in narration.segments],
+                )
+                narration = narration.model_copy(update={"segment_offsets_ms": offsets_ms})
+                ctx.store.save_narration(session_id, narration, level=active_level)
+            else:
+                from pr_walkthrough.tts._wav import merge_synth_chunks
+                audio_chunks: list[bytes] = []
+                async for chunk_bytes in ctx.tts.synth(tts_scrub(narration.narration)):
+                    audio_chunks.append(chunk_bytes)
+                audio = merge_synth_chunks(audio_chunks)
 
         ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio, level=active_level)
         # Also write the default variant to the audio_variants table so the

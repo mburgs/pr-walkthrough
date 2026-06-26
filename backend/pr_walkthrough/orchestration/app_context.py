@@ -6,6 +6,8 @@ Real adapters are plugged in by overriding the constructor args.
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from pathlib import Path
 
 from contracts.adapters import (
@@ -15,7 +17,13 @@ from contracts.adapters import (
     STTAdapter,
     TTSAdapter,
 )
+from pr_walkthrough.orchestration.throttle import (
+    resolve_llm_concurrency,
+    resolve_tts_concurrency,
+)
 from pr_walkthrough.store import SessionStore
+
+log = logging.getLogger(__name__)
 
 
 class AppContext:
@@ -110,3 +118,18 @@ class AppContext:
                 self.tts_registry = build_default_registry()
             except Exception:
                 self.tts_registry = None
+
+        # Concurrency caps for the two expensive operations the worker
+        # does. Kept here on AppContext (not module-global) so tests can
+        # construct an isolated context with custom limits and so the
+        # values are inspectable for diagnostics. Resolved at construction
+        # time from env / auto-detected RAM — see orchestration/throttle.py.
+        self.tts_concurrency: int = resolve_tts_concurrency()
+        self.llm_concurrency: int = resolve_llm_concurrency()
+        self.tts_semaphore: asyncio.Semaphore = asyncio.Semaphore(self.tts_concurrency)
+        self.llm_semaphore: asyncio.Semaphore = asyncio.Semaphore(self.llm_concurrency)
+        log.info(
+            "concurrency caps: tts=%d llm=%d (override via "
+            "PR_WALKTHROUGH_{TTS,LLM}_CONCURRENCY)",
+            self.tts_concurrency, self.llm_concurrency,
+        )

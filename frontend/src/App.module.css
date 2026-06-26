@@ -301,3 +301,65 @@
   min-height: 18px;  /* avoid layout shift when switching */
   padding-left: 2px;
 }
+
+/* ---------- Multi-stage loading screen ---------- */
+
+.loadingPhases {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  align-items: flex-start;
+  min-width: 280px;
+  padding: 24px 28px;
+}
+
+.loadingTitle {
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.loadingStageList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.loadingStage {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-dim);
+  font-size: 13.5px;
+  letter-spacing: -0.005em;
+  transition: color 200ms ease;
+}
+
+.loadingStageDone {
+  color: var(--text-muted);
+}
+.loadingStageActive {
+  color: var(--text);
+}
+
+.loadingStageIcon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.loadingStageDone .loadingStageIcon {
+  color: var(--accent);
+}
+
+.loadingStageLabel {
+  font-family: var(--font-sans);
+}

@@ -341,7 +341,11 @@ async def _synth_variant(
     log.info("synth variant %s/%s/filtered=%s for %s", engine, cid, filtered, sid)
     tts = await asyncio.to_thread(ctx.tts_registry.get, engine)
     texts = [tts_scrub(s.text) if filtered else s.text for s in segments]
-    audio, offsets = await synth_segments_to_wav(tts, texts)
+    # Variant synth runs the same heavy TTS pipeline as process_chunk; gate
+    # it on the same semaphore so a burst of variant requests can't bypass
+    # the cap and blow past available RAM.
+    async with ctx.tts_semaphore:
+        audio, offsets = await synth_segments_to_wav(tts, texts)
     ctx.store.save_audio_variant(sid, cid, engine, filtered, audio, offsets)
 
 

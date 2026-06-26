@@ -41,7 +41,15 @@ app = FastAPI(
 # this API and read PR contents / post comments via the user's `gh` auth.
 # Override via PR_WALKTHROUGH_ALLOWED_ORIGINS (comma-separated) if you
 # host the frontend somewhere unusual.
-_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+# Vite picks a free port from 5173 upward; include the common spread so a
+# casual `npm run dev` against a taken 5173 (which silently shifts to 5174,
+# 5175, 5180, …) doesn't trip a CORS denial. Override via env if you serve
+# the frontend on something exotic.
+_default_origins = ",".join(
+    f"http://{host}:{port}"
+    for host in ("localhost", "127.0.0.1")
+    for port in (5173, 5174, 5175, 5176, 5177, 5178, 5179, 5180)
+)
 _allowed_origins = [
     o.strip()
     for o in os.environ.get("PR_WALKTHROUGH_ALLOWED_ORIGINS", _default_origins).split(",")
