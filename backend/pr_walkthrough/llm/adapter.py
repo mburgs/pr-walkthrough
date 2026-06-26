@@ -8,9 +8,9 @@ NarrationTokenEvent SSEs before the full structured response lands.
 
 The interface is:
 
-    narration, token_stream = await adapter.narrate_chunk_streaming(plan, chunk, related)
-    # token_stream is an AsyncIterator[str] that yields narration tokens.
-    # narration is a ChunkNarration populated after the stream is consumed.
+    stream = await adapter.narrate_chunk_streaming(plan, chunk, related)
+    async for token in stream: ...   # token_stream is an AsyncIterator[str]
+    narration = stream.get_result()  # ChunkNarration, valid after exhaustion
 
 The plain narrate_chunk method is non-streaming and satisfies the LLMAdapter
 Protocol. Use narrate_chunk_streaming when the orchestrator wants to emit
@@ -447,22 +447,19 @@ class ClaudeLLMAdapter:
         plan: TourPlan,
         chunk: TourChunk,
         related: list[RelatedCode],
-    ) -> tuple[ChunkNarration, AsyncIterator[str]]:
+    ) -> "_StreamWrapper":
         """Narrate one chunk with token streaming on the narration field.
 
-        Returns (ChunkNarration, AsyncIterator[str]).
-
-        The AsyncIterator streams the tokens of the narration text as they
-        arrive from the API. The ChunkNarration is populated once streaming
-        completes. Callers should consume the iterator to drive the stream;
-        the narration object is valid only after the iterator is exhausted.
+        Returns a `_StreamWrapper` which behaves as an `AsyncIterator[str]`
+        of decoded narration tokens AND exposes `.get_result()` for the
+        completed `ChunkNarration` once the stream is exhausted.
 
         Usage::
 
-            narration, tokens = await adapter.narrate_chunk_streaming(plan, chunk, related)
-            async for token in tokens:
+            stream = await adapter.narrate_chunk_streaming(plan, chunk, related)
+            async for token in stream:
                 await sse_queue.put(NarrationTokenEvent(chunk_id=chunk.chunk_id, text=token))
-            # narration is now fully populated
+            narration = stream.get_result()
 
         Note: because tool-use structured output streams via the tool_input
         delta events (not text_delta), we parse the narration field from the
@@ -549,15 +546,7 @@ class ClaudeLLMAdapter:
             result_holder.append(self._parse_chunk_narration(raw))
 
         gen = _token_stream()
-
-        async def _consume_and_expose() -> AsyncIterator[str]:
-            async for tok in gen:
-                yield tok
-
-        # We need to return the ChunkNarration after the stream is consumed.
-        # We do this by returning a special wrapper that exposes the result.
-        wrapper = _StreamWrapper(gen, result_holder)
-        return wrapper.get_result, wrapper  # type: ignore[return-value]
+        return _StreamWrapper(gen, result_holder)
 
     # ------------------------------------------------------------------
     # answer_follow_up
@@ -697,8 +686,16 @@ def _snap_anchors_to_chunk_hunks(
         # Already overlaps a real hunk? Leave alone.
         if any(rs <= a_end and re >= a_start for rs, re in ranges):
             return anchor
-        # Snap to the hunk whose range is nearest the anchor's start
-        nearest = min(ranges, key=lambda r: min(abs(r[0] - a_start), abs(r[1] - a_start)))
+        # Snap to the hunk whose interval is nearest the anchor's interval.
+        # Use *gap* distance (0 if they touch, else the line count between
+        # the closest edges) rather than start-line distance — otherwise an
+        # anchor like (100,105) between hunks (10,20) and (200,210) snaps to
+        # the wrong hunk because the start-distance heuristic ignores edge
+        # proximity.
+        def gap(r: tuple[int, int]) -> int:
+            rs, re = r
+            return max(0, rs - a_end, a_start - re)
+        nearest = min(ranges, key=gap)
         # Preserve the relative span of the anchor but clamp inside the hunk
         span = max(0, a_end - a_start)
         new_start = max(nearest[0], min(nearest[1], a_start))

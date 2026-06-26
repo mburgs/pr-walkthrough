@@ -60,7 +60,7 @@ CREATE TABLE IF NOT EXISTS flags (
 -- audio-variants API populates this lazily on first request so the user
 -- can A/B different engines/filters on the same narration.
 CREATE TABLE IF NOT EXISTS audio_variants (
-    session_id     TEXT NOT NULL,
+    session_id     TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
     chunk_id       TEXT NOT NULL,
     engine         TEXT NOT NULL,
     filtered       INTEGER NOT NULL,
@@ -68,6 +68,13 @@ CREATE TABLE IF NOT EXISTS audio_variants (
     offsets_json   TEXT NOT NULL,
     PRIMARY KEY (session_id, chunk_id, engine, filtered)
 );
+
+-- Cleanup indexes — without these, `WHERE session_id=? AND chunk_id=?`
+-- queries against audio_variants / flags scan the table.
+CREATE INDEX IF NOT EXISTS ix_audio_variants_session_chunk
+    ON audio_variants(session_id, chunk_id);
+CREATE INDEX IF NOT EXISTS ix_flags_session
+    ON flags(session_id);
 """
 
 
@@ -101,6 +108,11 @@ class SessionStore:
             )
             if not self._uri:
                 conn.execute("PRAGMA journal_mode=WAL")
+            # SQLite defaults `foreign_keys=OFF`, so all the REFERENCES
+            # clauses above are otherwise no-ops. Turn them on per-connection
+            # — once cascade is real, deleting a session collects its narration
+            # / flag / follow-up / audio_variants rows automatically.
+            conn.execute("PRAGMA foreign_keys=ON")
             conn.row_factory = sqlite3.Row
             # CREATE TABLE IF NOT EXISTS is idempotent — safe to run per-connection.
             # Required so worker-thread connections also see the schema (esp. for

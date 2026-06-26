@@ -264,3 +264,21 @@ class TestSnapAnchorsToChunkHunks:
         )
         out = _snap_anchors_to_chunk_hunks(n, chunk)
         assert out.segments[0].anchor is None
+
+    def test_anchor_between_hunks_snaps_to_closer_by_interval(self):
+        """Regression: an anchor falling between two hunks must snap to the
+        hunk whose nearest edge is closer, not whose start line is closer.
+        Anchor at (100,105) between (10,20) and (200,210): gap-to-first=80
+        (105 vs 20), gap-to-second=95 (200 vs 105). Should snap to first.
+        Previously the start-line metric snapped to the further hunk."""
+        chunk = _chunk_with("a.py", [(10, 20), (200, 210)])
+        n = ChunkNarration(
+            chunk_id="c1",
+            narration="x",
+            segments=[_seg("hi", CodeAnchor(file="a.py", line_range=(100, 105)))],
+            related_code=[], concerns=[], look_closer_for=[],
+        )
+        out = _snap_anchors_to_chunk_hunks(n, chunk)
+        snapped = out.segments[0].anchor.line_range
+        # Falls inside (10,20) after clamp; preserved span 5 → end clamped at 20.
+        assert snapped == (20, 20)

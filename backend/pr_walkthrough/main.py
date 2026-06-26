@@ -9,6 +9,7 @@ The default AppContext wires up all fakes, so no external services are needed.
 from __future__ import annotations
 
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -35,11 +36,23 @@ app = FastAPI(
     description="Guided code-review API",
 )
 
+# Restrict CORS to the dev origins this tool actually uses. The wildcard
+# default would let any local script (drive-by JS on a browser tab) hit
+# this API and read PR contents / post comments via the user's `gh` auth.
+# Override via PR_WALKTHROUGH_ALLOWED_ORIGINS (comma-separated) if you
+# host the frontend somewhere unusual.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+_allowed_origins = [
+    o.strip()
+    for o in os.environ.get("PR_WALKTHROUGH_ALLOWED_ORIGINS", _default_origins).split(",")
+    if o.strip()
+]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-Segment-Offsets-Ms", "X-Answer-Audio-Url"],
 )
 
 app.include_router(sessions_router)

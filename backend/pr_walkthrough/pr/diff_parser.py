@@ -22,8 +22,15 @@ from sys import intern
 
 from contracts.schemas import Hunk
 
-_DIFF_HEADER = re.compile(r"^diff --git a/.+ b/(.+)$")
-_NEW_FILE = re.compile(r"^\+\+\+ b/(.+)$")
+# `diff --git` is the file boundary, but its path parsing is unreliable when
+# filenames contain spaces or special chars — git emits a/"some file.py"
+# "b/some file.py" in that case, and the unquoted form `a/foo b/bar`
+# matches a greedy `.+` ambiguously. The `+++ b/` line is the source of
+# truth for the new-side path, so we only use _DIFF_HEADER as a *boundary
+# marker* and trust _NEW_FILE for the path.
+_DIFF_HEADER = re.compile(r"^diff --git ")
+_NEW_FILE = re.compile(r'^\+\+\+ "?b/(.+?)"?$')
+_OLD_FILE = re.compile(r'^--- "?a/(.+?)"?$')
 _NEW_FILE_DEVNULL = re.compile(r"^\+\+\+ /dev/null$")
 _HUNK_HEADER = re.compile(
     r"^(@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:\s.*)?)$"
@@ -57,16 +64,17 @@ def parse_unified_diff(text: str) -> list[Hunk]:
             )
 
     for line in text.splitlines():
-        # New file in diff
-        diff_match = _DIFF_HEADER.match(line)
-        if diff_match:
+        # New file in diff. The +++ line that follows sets the canonical
+        # path; clear state here so a missing +++ (deleted file) leaves
+        # current_file None and the hunk gets dropped from `flush()` rather
+        # than mis-attributed to the previous file.
+        if _DIFF_HEADER.match(line):
             flush()
             body_lines = []
             current_header = None
             current_old_range = None
             current_new_range = None
-            # file will be set by +++ line; grab tentatively
-            current_file = diff_match.group(1)
+            current_file = None
             continue
 
         new_file_match = _NEW_FILE.match(line)
@@ -75,10 +83,18 @@ def parse_unified_diff(text: str) -> list[Hunk]:
             continue
 
         if _NEW_FILE_DEVNULL.match(line):
-            # deleted file — keep current_file from diff --git line
+            # Deleted file — the +++ side is /dev/null, so fall back to whatever
+            # the --- side parsed (set just below). Leave current_file as the
+            # old-side path if it was captured.
             continue
 
-        # --- line: skip (old file)
+        # --- line: usually the old-side path. We only need it for deleted
+        # files (so they get attributed to the path that *used* to exist).
+        # For modify/rename, +++ overrides this.
+        old_match = _OLD_FILE.match(line)
+        if old_match:
+            current_file = old_match.group(1)
+            continue
         if line.startswith("--- "):
             continue
 

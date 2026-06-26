@@ -171,3 +171,35 @@ class TestDiffParserEdgeCases:
         )
         hunks = parse_unified_diff(diff)
         assert hunks[0].header == "@@ -42,12 +42,28 @@ class SessionStore:"
+
+    def test_path_with_spaces(self) -> None:
+        """`gh pr diff` quotes paths that contain spaces — the parser must
+        unquote the +++ line rather than dropping the hunk silently."""
+        diff = (
+            'diff --git "a/some file.py" "b/some file.py"\n'
+            '--- "a/some file.py"\n'
+            '+++ "b/some file.py"\n'
+            "@@ -1,1 +1,1 @@\n"
+            "-old\n"
+            "+new\n"
+        )
+        hunks = parse_unified_diff(diff)
+        assert len(hunks) == 1
+        assert hunks[0].file == "some file.py"
+
+    def test_deleted_file_attributed_to_old_path(self) -> None:
+        """+++ /dev/null means the file was deleted; the hunk should still
+        carry the path from --- a/<path>, not be silently dropped."""
+        diff = (
+            "diff --git a/gone.py b/gone.py\n"
+            "deleted file mode 100644\n"
+            "--- a/gone.py\n"
+            "+++ /dev/null\n"
+            "@@ -1,2 +0,0 @@\n"
+            "-line1\n"
+            "-line2\n"
+        )
+        hunks = parse_unified_diff(diff)
+        assert len(hunks) == 1
+        assert hunks[0].file == "gone.py"
+        assert hunks[0].new_range == (0, 0)
