@@ -1,154 +1,177 @@
 # pr-walkthrough
 
-A guided code-review companion. Point it at a PR (or local branch diff), and an LLM narrator walks you through the change as if the author were giving the tour — speaking aloud, highlighting code, surfacing related context, and capturing questions you want to post back to the PR.
+A narrated, browser-based code-review companion for GitHub pull requests. Open a PR URL and an LLM walks you through the diff in a sensible order — speaking aloud, highlighting the lines it's discussing, surfacing related code, and capturing concerns you can post back as review comments.
 
-Status: **planning**. Nothing implemented yet.
+The narrator follows a **tour plan** instead of file-order so the architectural shape of the change comes first; chunks are grouped by purpose (API surface · Mechanism · Tests · …) in the sidebar. Audio synthesis, transcription, and PR I/O all run locally — only the diff text leaves the machine, and only to Anthropic.
 
-## Why
+## Status
 
-Code reviews are getting harder to do well. The friction isn't reading the diff — it's reconstructing context, deciding what deserves attention, and remembering to write the question down before it slips. A narrated walkthrough offloads the pacing and the context-gathering, and the question tracker keeps the review output durable.
+Working end-to-end. The PR demo flow (URL → plan → narrated tour with audio + diff highlighting + flag capture) is the canonical test. 110+ backend tests and 13 Playwright e2e tests cover the surface.
 
-## Core capabilities
+## Stack
 
-- Browser UI that shows pieces of the diff with surrounding context
-- TTS narration walking through each chunk in a sensible order (not strictly file-by-file)
-- Related code pulled in automatically (definitions, callers, recent history)
-- Pause-and-ask follow-up questions (text or voice)
-- Question tracker: items get drafted as PR comments, posted via `gh` when ready
-- Compliance mode: local-only TTS/STT/LLM for work use
+| Layer | Choice |
+|-------|--------|
+| Backend | Python 3.11+, FastAPI, SQLite |
+| Frontend | Vite + React 19 + TypeScript |
+| Diff render | `react-diff-view` with refractor (Prism) tokens |
+| LLM | Claude (Sonnet) via `anthropic` SDK — planning + structured narration |
+| Cross-repo context | Jedi (Python static analysis) + ripgrep fallback |
+| TTS | Kokoro 82M (local, Apache-2.0) — also Piper and macOS `say` |
+| STT | `faster-whisper` (push-to-talk follow-ups) |
+| PR I/O | `gh` CLI (uses your existing auth) |
 
-## Architecture
+## Quickstart
+
+### Prerequisites
+
+- Python 3.11+
+- Node 20+
+- `gh` CLI, authenticated (`gh auth status`)
+- An Anthropic API key
+- macOS or Linux
+
+### Install
+
+```bash
+# Backend (editable; also installs the shared `contracts` package from the repo root)
+cd backend
+python -m venv ../.venv && source ../.venv/bin/activate
+pip install -e . -e ..
+
+# Frontend
+cd ../frontend
+npm install
+```
+
+By default the backend installs without any TTS extra and falls back to macOS `say` if no engine is registered. To install Kokoro (recommended on Apple Silicon):
+
+```bash
+pip install -e '.[kokoro]'   # ~300 MB of model weights download on first run
+```
+
+### Configure
+
+Required:
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+```
+
+Optional but useful — point cross-repo context retrieval at the local clone of the PR's repo so Jedi can resolve references:
+
+```bash
+export PR_WALKTHROUGH_REPO_ROOT=/path/to/local/clone
+```
+
+CORS defaults to the Vite dev server (`http://localhost:5173`). Override if you serve the frontend elsewhere:
+
+```bash
+export PR_WALKTHROUGH_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+```
+
+### Run
+
+Two terminals:
+
+```bash
+# Terminal 1 — backend
+cd backend && uvicorn pr_walkthrough.main:app --reload --port 8200
+
+# Terminal 2 — frontend
+cd frontend && npm run dev
+```
+
+Open `http://localhost:5173`, paste a PR URL into the homepage form, and the walkthrough renders.
+
+To deep-link past the form: `http://localhost:5173/?pr=https://github.com/owner/repo/pull/123`.
+
+## How it works
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│  Frontend (Vite + React + TS)                           │
-│  - DiffViewer (file tree + hunks, react-diff-view)      │
-│  - NarrationPlayer (play/pause/skip/replay chunk)       │
-│  - SidePanel: related code, AI annotations, flags       │
-│  - QuestionTracker (mark-for-PR, edit, post)            │
-│  - FollowUpInput (text + push-to-talk mic)              │
-└──────────────────┬──────────────────────────────────────┘
-                   │ SSE (events) + HTTP (audio, RPC)
-┌──────────────────▼──────────────────────────────────────┐
-│  Backend (FastAPI)                                      │
-│  ┌────────────┐ ┌──────────────┐ ┌──────────────────┐  │
-│  │ DiffSource │ │ TourPlanner  │ │ ChunkNarrator    │  │
-│  │ (gh / git) │ │ (LLM)        │ │ (LLM, structured)│  │
-│  └────────────┘ └──────────────┘ └──────────────────┘  │
-│  ┌────────────┐ ┌──────────────┐ ┌──────────────────┐  │
-│  │ ContextRet │ │ TTS adapter  │ │ STT adapter      │  │
-│  │ (LSP/rg)   │ │ (Kokoro/...) │ │ (faster-whisper) │  │
-│  └────────────┘ └──────────────┘ └──────────────────┘  │
-│  ┌──────────────────────────────────────────────────┐  │
-│  │ SessionStore (SQLite): plan, chunks, flags, Q&A  │  │
-│  └──────────────────────────────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌─ Frontend (React) ────────────────────────────────────────┐
+│  DiffViewer  ·  NarrationPlayer  ·  RightRail (related,   │
+│  concerns, flags)  ·  FollowUpInput  ·  RelatedCodeModal  │
+└──────────────────┬────────────────────────────────────────┘
+                   │ HTTP + SSE (long-polled per chunk)
+┌──────────────────▼────────────────────────────────────────┐
+│  Backend (FastAPI)                                         │
+│  ┌─────────────┐ ┌───────────────┐ ┌──────────────────┐   │
+│  │ PRSource    │ │ TourPlanner   │ │ ChunkNarrator    │   │
+│  │ (gh CLI)    │ │ (Claude)      │ │ (Claude, tools)  │   │
+│  └─────────────┘ └───────────────┘ └──────────────────┘   │
+│  ┌─────────────┐ ┌───────────────┐ ┌──────────────────┐   │
+│  │ ContextRet  │ │ TTS adapter   │ │ STT adapter      │   │
+│  │ (Jedi + rg) │ │ (Kokoro/say)  │ │ (faster-whisper) │   │
+│  └─────────────┘ └───────────────┘ └──────────────────┘   │
+│  ┌─────────────────────────────────────────────────────┐  │
+│  │ SessionStore (SQLite with FK cascades)              │  │
+│  └─────────────────────────────────────────────────────┘  │
+└────────────────────────────────────────────────────────────┘
 ```
 
-## Default stack (negotiable)
+The planner picks a tour order driven by *architectural altitude* — what changes the API surface lands first, then the mechanism, then tests — and a chunk can split across files or repeat a hunk if narrative cohesion warrants it. Each chunk's narration is structured (`segments[]` with optional anchors, plus `related_code`, `concerns`, and audio-segment offsets) so the UI can highlight lines while the audio plays.
 
-| Layer | Choice | Why |
-|-------|--------|-----|
-| Backend | Python + FastAPI | Best ML/audio ecosystem; clean async + SSE |
-| Frontend | Vite + React + TS | Standard, fast iteration |
-| Diff render | `react-diff-view` | Hunk-level control, side-by-side or unified |
-| TTS (local) | Kokoro 82M (Apache-2.0) | Best quality-per-MB local TTS; CPU-fine on Mac |
-| TTS fallback | Piper, then macOS `say` | Always something working |
-| STT (local) | faster-whisper (base / small) | CTranslate2 backend, fast on CPU |
-| LLM | Claude API (work + personal access) | Best planning + structured output; audio stays local so code-only egress is fine |
-| Storage | SQLite | One file, zero ops |
-| PR I/O | `gh` CLI shelled out | Auth already handled; fine to lean on it where convenient |
+When you click a related-code row in the right rail, the modal fetches the **full containing file** from the configured `repo_root` and scrolls to the anchor range. Path-traversal-protected, 1 MB cap, dotfiles refused.
 
-## Key flows
+### Data egress
 
-### 1. Plan generation (once per session)
-Fetch diff → group hunks by file → LLM emits an ordered tour:
-```json
-[
-  { "chunk_id": "c1",
-    "files": ["src/auth/session.py"],
-    "hunks": ["@@ -45,12 +45,28 @@", "..."],
-    "summary": "New session-token rotation logic",
-    "rationale_for_position": "Architecturally central; everything else builds on this",
-    "est_concern_level": "medium" }
-]
+The diff text goes to Anthropic (Claude). **Audio never leaves the machine** — TTS synth and STT transcription both run locally. PR I/O uses your local `gh` auth.
+
+## Development
+
+```bash
+# Backend tests
+cd backend && pytest
+
+# E2E (frontend + MSW-mocked backend; no real Python backend needed)
+cd frontend && npx playwright install --with-deps   # first time only
+cd frontend && npx playwright test
+
+# Frontend typecheck
+cd frontend && npx tsc --noEmit
 ```
-The order matters — lead with the architecturally interesting parts, not alphabetical filenames.
 
-### 2. Per-chunk narration (lazy, with prefetch of N+1)
-LLM produces **structured output** per chunk:
-```json
-{
-  "narration": "We're swapping the in-memory session map for...",
-  "code_highlights": [{"file": "...", "line_range": [50, 62], "why": "..."}],
-  "related_code":    [{"file": "...", "line_range": [10, 30], "relationship": "callsite"}],
-  "concerns":        [{"severity": "medium", "text": "...", "suggested_question": "..."}],
-  "look_closer_for": ["race between rotate() and read()"]
-}
-```
-- `narration` → TTS → streamed audio chunks
-- Everything else → SSE events that drive UI panels
+Test layout:
 
-### 3. Follow-up Q&A
-- Pause → ask (text or push-to-talk)
-- LLM has session context: tour plan + chunks seen + current code + prior Q&A
-- If model agrees the concern is real, an **"Add to PR questions"** button surfaces
+- `backend/tests/test_chunks_endpoints.py` — long-poll, audio variants, regenerate, `/files`
+- `backend/tests/test_narration_pipeline.py` — `tts_scrub`, anchor coercion, `_snap_anchors_to_chunk_hunks`
+- `backend/tests/test_e2e.py` — end-to-end FastAPI surface against fake adapters
+- `backend/tests/pr/test_diff_parser.py` — unified diff parsing edge cases
+- `backend/tests/test_llm_adapter.py` — opt-in live Claude tests (marked `live`; needs `ANTHROPIC_API_KEY`)
+- `frontend/e2e/walkthrough.spec.ts` — Playwright over MSW
 
-### 4. Question tracker → PR
-- Persistent per-session list
-- Each item: free text + anchor (file:line) + draft comment body
-- "Post to PR" → `gh pr review --comment` or inline via `gh api`
-
-## Data egress posture
-
-Code goes to Claude (approved at work and personal). **Audio never leaves the machine** — TTS synth and STT transcription both run locally. That's the entire compliance story; no separate "compliance mode" needed.
-
-A startup audit logs every outbound destination the first time it's used, so it's obvious if a dependency starts phoning home unexpectedly.
-
-## Decisions locked in (2026-06-23)
-
-- **LLM:** Claude across the board
-- **Diff source:** GitHub PRs (no local-branch flow in v1)
-- **Voice follow-ups:** required for v1
-- **Standalone tool**, but free to lean on `gh` CLI for PR fetch + comment posting since it removes an auth layer
-- **Language-agnostic:** no per-language code paths; LSP enrichment (M5) can grow language support opportunistically
-
-## Parallel development
-
-See [STREAMS.md](STREAMS.md) for the 8-stream decomposition, the contracts that make parallelism possible, and the recommended day-1 order. The milestones below describe *integration points* between streams, not sequential phases.
-
-## Milestone sketch
-
-1. **M1 — Walking skeleton:** `gh pr view --json` → Claude tour plan → terminal-printed. No UI, no TTS. Proves the planning prompt against real PRs.
-2. **M2 — UI shell:** React app renders diff + chunk list, plays through a stubbed narration endpoint (text-only bubbles, no audio yet).
-3. **M3 — TTS online:** Kokoro adapter behind `/tts`, audio streams per chunk, prefetch N+1.
-4. **M4 — Voice follow-ups:** faster-whisper push-to-talk → Claude with full session context → reply rendered + spoken. (Pulled forward from M7 since you flagged it as v1-required.)
-5. **M5 — Context retrieval:** related-code side panel via ripgrep (+ optional LSP later).
-6. **M6 — Question tracker + PR posting:** flag concerns → draft → `gh pr review --comment` / inline via `gh api`.
-7. **M7 — Polish:** keyboard shortcuts, replay/skip, session resume, transcript export.
-
-## Repo layout (planned)
+## Project layout
 
 ```
 pr-walkthrough/
-  backend/
-    pyproject.toml
-    pr_walkthrough/
-      api/           # FastAPI routes + SSE
-      diff/          # gh + local git sources
-      planner/       # tour planning LLM calls
-      narrator/      # per-chunk structured narration
-      context/       # related-code retrieval
-      tts/           # adapters: kokoro, piper, say
-      stt/           # adapters: faster-whisper
-      llm/           # adapters: anthropic, ollama
-      store/         # sqlite session persistence
-  frontend/
-    package.json
-    src/
-      components/
-      hooks/
-      api/
-  PLAN.md            # this file's longer-form thinking, evolves
-  README.md          # this file
+├── backend/
+│   └── pr_walkthrough/
+│       ├── api/            # FastAPI routers (sessions, chunks, flags, follow_ups, events)
+│       ├── context/        # Jedi + ripgrep retrievers for related code
+│       ├── fakes/          # in-process fakes for tests / dev
+│       ├── llm/            # Claude adapter, prompts, tool-use schemas
+│       ├── orchestration/  # AppContext, chunk_worker (narrate + synth pipeline)
+│       ├── pr/             # gh CLI source, unified diff parser
+│       ├── store/          # SQLite session store
+│       ├── stt/            # faster-whisper adapter
+│       ├── tts/            # Kokoro / Piper / say adapters
+│       └── main.py         # FastAPI app entry
+├── contracts/              # shared schemas + adapter Protocols (Pydantic)
+├── frontend/
+│   └── src/
+│       ├── api/            # typed client
+│       ├── components/     # DiffViewer, NarrationPlayer, RightRail, RelatedCodeModal, …
+│       ├── contexts/       # SessionContext (state machine + lifecycle)
+│       ├── mocks/          # MSW handlers + fixtures
+│       └── lib/            # transcript export, syntax highlight wrapper
+└── fixtures/               # canonical PR-shaped fixtures
 ```
+
+## Design notes
+
+[`STREAMS.md`](STREAMS.md) captures the 8-stream parallel-development decomposition the project started from, including the contracts that let frontend/backend/LLM/TTS/STT/PR teams iterate independently.
+
+## Acknowledgements
+
+Diff rendering by [`react-diff-view`](https://github.com/otakustay/react-diff-view), syntax highlighting via [refractor](https://github.com/wooorm/refractor) (Prism). Local TTS by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M). Code intelligence by [Jedi](https://github.com/davidhalter/jedi). PR I/O via [GitHub CLI](https://cli.github.com/).

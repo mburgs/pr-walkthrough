@@ -19,3 +19,14 @@ sessions.db-wal
 # Playwright
 test-results/
 playwright-report/
+
+# Claude Code worktrees (per-agent scratch checkouts)
+.claude/
+
+# Local secrets — never commit
+.env
+.env.*
+
+# Editor / IDE
+.vscode/
+.idea/
