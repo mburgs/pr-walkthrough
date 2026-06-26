@@ -19,6 +19,23 @@ def test_create_session_returns_tour_plan(client: TestClient) -> None:
     assert plan["chunks"]
     assert "session_id" in plan
     assert plan["pr"]["url"] == PR_URL
+    assert plan["familiarity"] == "review"  # default when not specified
+
+
+@pytest.mark.parametrize("level", ["tutorial", "tour", "review", "highlights"])
+def test_create_session_persists_familiarity(client: TestClient, level: str) -> None:
+    resp = client.post("/sessions", json={"pr_url": PR_URL, "familiarity": level})
+    assert resp.status_code == 201, resp.text
+    plan = resp.json()
+    assert plan["familiarity"] == level
+    # Round-trip through GET so we know it persisted on the session store
+    state = client.get(f"/sessions/{plan['session_id']}").json()
+    assert state["plan"]["familiarity"] == level
+
+
+def test_create_session_rejects_unknown_familiarity(client: TestClient) -> None:
+    resp = client.post("/sessions", json={"pr_url": PR_URL, "familiarity": "expert"})
+    assert resp.status_code == 422
 
 
 def test_get_session_state(client: TestClient) -> None:

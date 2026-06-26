@@ -166,17 +166,68 @@ def format_hunk_for_narration(hunk: Hunk) -> str:
     return "\n".join(lines)
 
 
+# Per-familiarity guidance appended to the narrate_chunk system addendum.
+# Each block is additive on top of the SYSTEM_PROMPT's "WHAT TO SAY" rules —
+# it tells the model where on the verbosity dial to land. The wording
+# below is intentionally written like coaching instructions, not bullet
+# points, so the model treats it as a posture rather than a checklist.
+_FAMILIARITY_BLOCKS: dict[str, str] = {
+    "tutorial": """\
+NARRATION DEPTH: tutorial
+--------------------------
+The reviewer is new to this language/framework. On top of the standard \
+tour, briefly explain language constructs that might confuse a newcomer \
+when they appear (decorators, async/await semantics, generator \
+expressions, type-hinting quirks, framework-specific magic). Treat \
+unusual syntax as a teaching moment — one short clause is enough; \
+don't lecture. Aim for 4-7 segments instead of 2-5. Longer is fine when \
+it earns its keep with pedagogy; never when it just restates code.\
+""",
+    "tour": """\
+NARRATION DEPTH: tour
+---------------------
+The reviewer knows the language/framework but is new to this repo. \
+Surface the repo's conventions where they shape this change: what's \
+idiomatic here, what patterns this PR follows or breaks, where the \
+change sits architecturally. Skip language tutoring; do orient the \
+reviewer to the codebase culture. Aim for 3-6 segments.\
+""",
+    "review": """\
+NARRATION DEPTH: review
+-----------------------
+The reviewer knows the language AND the repo well. Skip explanations of \
+framework idioms or repo conventions — assume them. Focus on this \
+specific change: what it does to the system, what it changes for \
+callers, what's risky. Aim for the standard 2-5 segments.\
+""",
+    "highlights": """\
+NARRATION DEPTH: highlights
+---------------------------
+The reviewer is broadly familiar with the change already and wants only \
+the high-impact moments. Cut orienting context. Be ruthless about \
+trimming anything that's description, transition, or summary. Aim for \
+2-3 dense segments; one of them can be a single sentence if that's \
+where the substance lives.\
+""",
+}
+
+
 def build_narrate_chunk_system_addendum(plan: TourPlan, diff_context: str) -> str:
     """Build the cacheable diff-context block to append to the system prompt.
 
     Intent: The plan summary and the full diff are stable for the entire
     session, so we place them in a second system block with cache_control so
     the token cost is amortised across all narrate_chunk calls.
+
+    Familiarity-level guidance is appended at the bottom so a session's
+    chosen depth steers every narrate_chunk call without us re-shipping
+    the diff each time.
     """
     chunk_list = "\n".join(
         f"  {c.chunk_id}: {c.summary} [{c.est_concern_level}]"
         for c in plan.chunks
     )
+    familiarity_block = _FAMILIARITY_BLOCKS.get(plan.familiarity, _FAMILIARITY_BLOCKS["review"])
     return (
         f"SESSION CONTEXT\n"
         f"---------------\n"
@@ -185,7 +236,8 @@ def build_narrate_chunk_system_addendum(plan: TourPlan, diff_context: str) -> st
         f"Tour order:\n{chunk_list}\n\n"
         f"FULL DIFF (for reference)\n"
         f"-------------------------\n"
-        f"{diff_context}"
+        f"{diff_context}\n\n"
+        f"{familiarity_block}"
     )
 
 

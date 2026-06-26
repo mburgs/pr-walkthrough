@@ -16,6 +16,19 @@ RelationshipKind = Literal[
     "definition", "callsite", "test", "prior_version", "sibling"
 ]
 
+# Verbosity gradient for the narration. Picked by the reviewer at session
+# create time and threaded into the narrate prompt. Each higher level
+# *adds* coverage on top of the lower one — Tutorial is the most detailed,
+# Highlights is the most terse.
+#
+#   tutorial   — also explains language/framework constructs the reviewer
+#                may not know (Python decorators, async patterns, etc.)
+#   tour       — adds repo context: how this PR fits the codebase, what
+#                patterns are conventional vs. new
+#   review     — focuses on the change; assumes repo familiarity
+#   highlights — just the high-impact moments (current default behaviour)
+FamiliarityLevel = Literal["tutorial", "tour", "review", "highlights"]
+
 
 class PRMetadata(BaseModel):
     """Surface-level info about the PR being reviewed."""
@@ -81,6 +94,15 @@ class TourPlan(BaseModel):
     session_id: str
     pr: PRMetadata
     chunks: list[TourChunk]
+    familiarity: FamiliarityLevel = Field(
+        "review",
+        description=(
+            "How familiar the reviewer is with the change/repo. Controls "
+            "narration depth — see FamiliarityLevel docstring. Default "
+            "'review' assumes the reviewer knows the repo + language but "
+            "not this specific PR."
+        ),
+    )
 
 
 class RelatedCode(BaseModel):

@@ -8,6 +8,7 @@ import type {
   SessionState,
   ChunkNarration,
   Flag,
+  FamiliarityLevel,
   FollowUpAnswer,
 } from "../contracts";
 
@@ -24,11 +25,14 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export function createSession(prUrl: string): Promise<TourPlan> {
+export function createSession(
+  prUrl: string,
+  familiarity: FamiliarityLevel = "review",
+): Promise<TourPlan> {
   return request<TourPlan>("/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pr_url: prUrl }),
+    body: JSON.stringify({ pr_url: prUrl, familiarity }),
   });
 }
 

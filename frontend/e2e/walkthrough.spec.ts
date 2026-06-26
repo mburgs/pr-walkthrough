@@ -35,6 +35,29 @@ test.describe("homepage", () => {
     await submit.click();
     await expect(page.getByText(FIXTURE_TITLE).first()).toBeVisible({ timeout: 15_000 });
   });
+
+  test("familiarity selector shows 4 options, defaults to Review, posts choice", async ({ page }) => {
+    await page.goto("/");
+    // All 4 options rendered as radios; review is checked by default.
+    const radios = page.getByRole("radio");
+    await expect(radios).toHaveCount(4);
+    await expect(page.getByRole("radio", { name: "Review" })).toHaveAttribute("aria-checked", "true");
+
+    // Capture the POST body so we can verify the choice was sent
+    const reqPromise = page.waitForRequest((req) =>
+      req.url().endsWith("/sessions") && req.method() === "POST"
+    );
+
+    await page.getByRole("radio", { name: "Tutorial" }).click();
+    await expect(page.getByRole("radio", { name: "Tutorial" })).toHaveAttribute("aria-checked", "true");
+    await page.getByLabel("Pull request URL").fill("https://github.com/example-org/auth-service/pull/142");
+    await page.getByRole("button", { name: /Start walkthrough/ }).click();
+
+    const req = await reqPromise;
+    const body = JSON.parse(req.postData() ?? "{}");
+    expect(body.familiarity).toBe("tutorial");
+    expect(body.pr_url).toContain("pull/142");
+  });
 });
 
 test.describe("walkthrough shell", () => {

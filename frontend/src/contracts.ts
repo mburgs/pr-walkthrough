@@ -14,6 +14,13 @@ export type RelationshipKind =
   | "prior_version"
   | "sibling";
 
+/**
+ * Verbosity gradient for the narration. Each higher level adds coverage
+ * on top of the lower one — tutorial is the most detailed, highlights
+ * the most terse. See backend `contracts/schemas.py:FamiliarityLevel`.
+ */
+export type FamiliarityLevel = "tutorial" | "tour" | "review" | "highlights";
+
 // ── Core models ──────────────────────────────────────────────────────────────
 
 export interface PRMetadata {
@@ -57,6 +64,8 @@ export interface TourPlan {
   session_id: string;
   pr: PRMetadata;
   chunks: TourChunk[];
+  /** How familiar the reviewer is with the change/repo; default 'review'. */
+  familiarity?: FamiliarityLevel;
 }
 
 export interface RelatedCode {

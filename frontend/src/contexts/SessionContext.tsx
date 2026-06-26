@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
-import type { SessionState, Flag, ChunkNarration, FollowUpAnswer } from "../contracts";
+import type { SessionState, Flag, ChunkNarration, FamiliarityLevel, FollowUpAnswer } from "../contracts";
 import * as api from "../api/client";
 
 interface SessionContextValue {
@@ -16,7 +16,7 @@ interface SessionContextValue {
   postFlag: (fid: string) => Promise<Flag>;
   deleteFlag: (fid: string) => Promise<void>;
   submitFollowUp: (text: string, audioBlob?: Blob) => Promise<FollowUpAnswer>;
-  initSession: (prUrl: string) => Promise<void>;
+  initSession: (prUrl: string, familiarity?: FamiliarityLevel) => Promise<void>;
   resumeSession: (sid: string) => Promise<void>;
   /** Wipe the current chunk's narration + audio cache and re-fetch. Returns
    * a busting key callers can append to URLs (e.g. audio src) so the browser
@@ -81,12 +81,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setNarrationGen({});
   }, []);
 
-  const initSession = useCallback(async (prUrl: string) => {
+  const initSession = useCallback(async (prUrl: string, familiarity: FamiliarityLevel = "review") => {
     resetSessionState();
     setLoading(true);
     setError(null);
     try {
-      const plan = await api.createSession(prUrl);
+      const plan = await api.createSession(prUrl, familiarity);
       const state = await api.getSession(plan.session_id);
       setSession(state);
       setFlags(state.flags);

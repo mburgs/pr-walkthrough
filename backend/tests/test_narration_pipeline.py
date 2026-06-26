@@ -12,7 +12,10 @@ from contracts.schemas import (
 from pr_walkthrough.llm.adapter import (
     ClaudeLLMAdapter, _coerce_anchors, _snap_anchors_to_chunk_hunks,
 )
-from pr_walkthrough.llm.prompts import format_hunk_for_narration
+from pr_walkthrough.llm.prompts import (
+    build_narrate_chunk_system_addendum,
+    format_hunk_for_narration,
+)
 from pr_walkthrough.orchestration.chunk_worker import tts_scrub
 
 
@@ -282,3 +285,51 @@ class TestSnapAnchorsToChunkHunks:
         snapped = out.segments[0].anchor.line_range
         # Falls inside (10,20) after clamp; preserved span 5 → end clamped at 20.
         assert snapped == (20, 20)
+
+
+# ---------------------------------------------------------------------------
+# Familiarity branching in the narrate system addendum
+# ---------------------------------------------------------------------------
+
+from contracts.schemas import PRMetadata, TourPlan
+
+
+def _plan(familiarity: str) -> TourPlan:
+    return TourPlan(
+        session_id="sess_x",
+        pr=PRMetadata(
+            url="https://gh.com/a/b/pull/1", repo="a/b", number=1,
+            title="t", author="me", base_ref="main", head_ref="feat",
+            base_sha="0"*40, head_sha="1"*40,
+        ),
+        chunks=[_chunk_with("a.py", [(10, 20)])],
+        familiarity=familiarity,  # type: ignore[arg-type]
+    )
+
+
+class TestFamiliarityInPrompt:
+    """The narration depth instruction lives in the cacheable system
+    addendum; this guards against accidental removal of the branch or a
+    typo in the level name that would silently fall back to 'review'."""
+
+    @pytest.mark.parametrize("level, marker", [
+        ("tutorial",   "NARRATION DEPTH: tutorial"),
+        ("tour",       "NARRATION DEPTH: tour"),
+        ("review",     "NARRATION DEPTH: review"),
+        ("highlights", "NARRATION DEPTH: highlights"),
+    ])
+    def test_each_level_inserts_distinct_block(self, level, marker):
+        addendum = build_narrate_chunk_system_addendum(_plan(level), "diff")
+        assert marker in addendum, f"missing depth marker for {level!r}"
+        # And the *other* markers should NOT appear (no double-emission)
+        for other in ("tutorial", "tour", "review", "highlights"):
+            if other == level: continue
+            assert f"NARRATION DEPTH: {other}" not in addendum
+
+    def test_default_falls_back_to_review_block(self):
+        # The schema default is review; if a plan lands here with an
+        # unexpected value (shouldn't happen via the API), the prompt
+        # should still pick a valid block instead of blowing up.
+        plan = _plan("review")
+        out = build_narrate_chunk_system_addendum(plan, "diff")
+        assert "NARRATION DEPTH: review" in out

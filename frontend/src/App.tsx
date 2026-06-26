@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { SessionProvider, useSession } from "./contexts/SessionContext";
 import SessionShell from "./components/SessionShell";
 import { exportTranscript } from "./lib/exportTranscript";
+import type { FamiliarityLevel } from "./contracts";
 import styles from "./App.module.css";
 
 function readBootHints(): { sid?: string; prUrl?: string } {
@@ -43,11 +44,11 @@ function AppContent() {
   // Error case falls through to the error UI below so the user sees the
   // failure rather than a form that swallows the context.
   if (booted && !session && !loading && !error) {
-    return <Homepage onSubmit={(url) => {
+    return <Homepage onSubmit={(url, familiarity) => {
       const next = new URL(window.location.href);
       next.searchParams.set("pr", url);
       window.history.replaceState({}, "", next.toString());
-      initSession(url);
+      initSession(url, familiarity);
     }} />;
   }
 
@@ -146,16 +147,25 @@ function AppContent() {
   );
 }
 
-function Homepage({ onSubmit }: { onSubmit: (url: string) => void }) {
+const FAMILIARITY_OPTIONS: { value: FamiliarityLevel; label: string; blurb: string }[] = [
+  { value: "tutorial",  label: "Tutorial",   blurb: "New to the language/framework — explain unusual syntax too." },
+  { value: "tour",      label: "Tour",       blurb: "Know the language; new to this repo — orient me to its conventions." },
+  { value: "review",    label: "Review",     blurb: "Know the repo; focus on this specific change." },
+  { value: "highlights",label: "Highlights", blurb: "Already familiar — just the high-impact moments." },
+];
+
+function Homepage({ onSubmit }: { onSubmit: (url: string, familiarity: FamiliarityLevel) => void }) {
   const [value, setValue] = useState("");
+  const [familiarity, setFamiliarity] = useState<FamiliarityLevel>("review");
   const trimmed = value.trim();
   const valid = /^https?:\/\/github\.com\/[^/]+\/[^/]+\/pull\/\d+/.test(trimmed);
+  const activeBlurb = FAMILIARITY_OPTIONS.find(o => o.value === familiarity)?.blurb ?? "";
 
   return (
     <div className={styles.fullCenter}>
       <form
         className={styles.homeForm}
-        onSubmit={(e) => { e.preventDefault(); if (valid) onSubmit(trimmed); }}
+        onSubmit={(e) => { e.preventDefault(); if (valid) onSubmit(trimmed, familiarity); }}
       >
         <div className={styles.homeBrand}>
           <span className={styles.brandMark}>pr</span>
@@ -177,6 +187,26 @@ function Homepage({ onSubmit }: { onSubmit: (url: string) => void }) {
           onChange={(e) => setValue(e.target.value)}
           className={styles.homeInput}
         />
+
+        <fieldset className={styles.homeFieldset}>
+          <legend className={styles.homeLabel}>How familiar are you?</legend>
+          <div className={styles.homeSegmented} role="radiogroup" aria-label="Narration depth">
+            {FAMILIARITY_OPTIONS.map(opt => (
+              <button
+                type="button"
+                key={opt.value}
+                role="radio"
+                aria-checked={familiarity === opt.value}
+                className={`${styles.homeSegment} ${familiarity === opt.value ? styles.homeSegmentActive : ""}`}
+                onClick={() => setFamiliarity(opt.value)}
+              >
+                {opt.label}
+              </button>
+            ))}
+          </div>
+          <div className={styles.homeSegmentBlurb}>{activeBlurb}</div>
+        </fieldset>
+
         <button
           type="submit"
           disabled={!valid}

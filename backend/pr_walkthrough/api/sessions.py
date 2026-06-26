@@ -7,7 +7,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from contracts.schemas import SessionState, TourPlan
+from contracts.schemas import FamiliarityLevel, SessionState, TourPlan
 from pr_walkthrough.orchestration import AppContext
 
 from .chunks import _maybe_kick_off_narration
@@ -19,6 +19,7 @@ router = APIRouter()
 
 class CreateSessionRequest(BaseModel):
     pr_url: str
+    familiarity: FamiliarityLevel = "review"
 
 
 @router.post("/sessions", response_model=TourPlan, status_code=201)
@@ -36,7 +37,12 @@ async def create_session(
     # deterministic-looking ID (e.g. "sess_cli_cli_pr1") which collides on
     # repeat POSTs — React StrictMode's dev double-effect alone tripped UNIQUE.
     # Override with a server-generated UUID; the orchestrator owns identity.
-    plan = plan.model_copy(update={"session_id": f"sess_{uuid.uuid4().hex[:12]}"})
+    # Familiarity comes from the client, not the planner; stamp it here so
+    # the narration step downstream can read it off the plan.
+    plan = plan.model_copy(update={
+        "session_id": f"sess_{uuid.uuid4().hex[:12]}",
+        "familiarity": body.familiarity,
+    })
 
     ctx.store.create_session(plan)
 

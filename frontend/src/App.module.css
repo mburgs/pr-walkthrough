@@ -252,3 +252,52 @@
   border-radius: 3px;
   color: var(--text-muted);
 }
+
+.homeFieldset {
+  border: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.homeSegmented {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 6px;
+  background: var(--bg-tinted);
+  padding: 4px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.homeSegment {
+  background: transparent;
+  border: 1px solid transparent;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: -0.005em;
+  padding: 7px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.homeSegment:hover {
+  color: var(--text);
+}
+.homeSegmentActive {
+  background: var(--surface-2);
+  color: var(--text);
+  border-color: var(--border);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+.homeSegmentBlurb {
+  font-size: 12px;
+  color: var(--text-dim);
+  letter-spacing: -0.005em;
+  min-height: 18px;  /* avoid layout shift when switching */
+  padding-left: 2px;
+}
