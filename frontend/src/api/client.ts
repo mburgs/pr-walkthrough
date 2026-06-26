@@ -28,11 +28,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export function createSession(
   prUrl: string,
   familiarity: FamiliarityLevel = "review",
+  multiLevel: boolean = false,
 ): Promise<TourPlan> {
   return request<TourPlan>("/sessions", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ pr_url: prUrl, familiarity }),
+    body: JSON.stringify({ pr_url: prUrl, familiarity, multi_level: multiLevel }),
   });
 }
 
@@ -40,8 +41,13 @@ export function getSession(sid: string): Promise<SessionState> {
   return request<SessionState>(`/sessions/${sid}`);
 }
 
-export function getChunkNarration(sid: string, cid: string): Promise<ChunkNarration> {
-  return request<ChunkNarration>(`/sessions/${sid}/chunks/${cid}`);
+export function getChunkNarration(
+  sid: string,
+  cid: string,
+  level?: FamiliarityLevel,
+): Promise<ChunkNarration> {
+  const q = level ? `?level=${encodeURIComponent(level)}` : "";
+  return request<ChunkNarration>(`/sessions/${sid}/chunks/${cid}${q}`);
 }
 
 export function regenerateChunk(sid: string, cid: string): Promise<{ status: string; chunk_id: string }> {
@@ -52,8 +58,9 @@ export function getRepoFile(sid: string, path: string): Promise<{ path: string; 
   return request(`/sessions/${sid}/files?path=${encodeURIComponent(path)}`);
 }
 
-export function getAudioUrl(sid: string, cid: string): string {
-  return `${BASE}/sessions/${sid}/chunks/${cid}/audio`;
+export function getAudioUrl(sid: string, cid: string, level?: FamiliarityLevel): string {
+  const q = level ? `?level=${encodeURIComponent(level)}` : "";
+  return `${BASE}/sessions/${sid}/chunks/${cid}/audio${q}`;
 }
 
 export function getVariantAudioUrl(

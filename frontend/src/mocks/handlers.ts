@@ -40,10 +40,24 @@ function currentNarration(cid: string): ChunkNarration | undefined {
   return { ...base, segments };
 }
 
+// Last-submitted familiarity + multi_level, surfaced into the cached
+// `plan` so /sessions/:sid GETs reflect the same choice the client posted.
+let activePlan: TourPlan = plan;
+
 export const handlers = [
-  // POST /sessions — create a new session
-  http.post("/sessions", async () => {
-    return HttpResponse.json(plan);
+  // POST /sessions — create a new session. Echo the requested familiarity
+  // + multi_level back on the plan so the rest of the app threads them.
+  http.post("/sessions", async ({ request }) => {
+    const body = (await request.json().catch(() => ({}))) as {
+      familiarity?: string;
+      multi_level?: boolean;
+    };
+    activePlan = {
+      ...plan,
+      familiarity: (body.familiarity as TourPlan["familiarity"]) ?? "review",
+      multi_level: !!body.multi_level,
+    };
+    return HttpResponse.json(activePlan);
   }),
 
   // GET /sessions/:sid — session state snapshot
@@ -52,8 +66,8 @@ export const handlers = [
       return HttpResponse.json({ detail: "session not found" }, { status: 404 });
     }
     const state: SessionState = {
-      plan,
-      current_chunk_id: plan.chunks[0]?.chunk_id ?? null,
+      plan: activePlan,
+      current_chunk_id: activePlan.chunks[0]?.chunk_id ?? null,
       flags: [...flags],
     };
     return HttpResponse.json(state);

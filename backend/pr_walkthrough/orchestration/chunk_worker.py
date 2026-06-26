@@ -82,8 +82,19 @@ async def process_chunk(
     plan: TourPlan,
     chunk: TourChunk,
     session_id: str,
+    level: str | None = None,
 ) -> None:
-    """Run narration + TTS for one chunk and push SSE events."""
+    """Run narration + TTS for one chunk and push SSE events.
+
+    `level` overrides `plan.familiarity` for this run — used by the ALL
+    mode flow which spawns one worker per level. When None, narrate at
+    the plan's configured familiarity.
+    """
+    if level is not None and level != plan.familiarity:
+        # The prompt builder reads plan.familiarity, so pass a per-level
+        # copy down. Cheap: it's the same chunks + same PR metadata.
+        plan = plan.model_copy(update={"familiarity": level})
+    active_level: str = plan.familiarity
     try:
         # 1. chunk_started
         await publish(session_id, {"event_type": "chunk_started", "chunk_id": chunk.chunk_id})
@@ -111,8 +122,8 @@ async def process_chunk(
             },
         )
 
-        # 5. Persist narration
-        ctx.store.save_narration(session_id, narration)
+        # 5. Persist narration (keyed per level)
+        ctx.store.save_narration(session_id, narration, level=active_level)
         ctx.store.update_current_chunk(session_id, chunk.chunk_id)
 
         # 6. chunk_complete
@@ -127,7 +138,7 @@ async def process_chunk(
                 [tts_scrub(s.text) for s in narration.segments],
             )
             narration = narration.model_copy(update={"segment_offsets_ms": offsets_ms})
-            ctx.store.save_narration(session_id, narration)
+            ctx.store.save_narration(session_id, narration, level=active_level)
         else:
             from pr_walkthrough.tts._wav import merge_synth_chunks
             audio_chunks: list[bytes] = []
@@ -135,7 +146,7 @@ async def process_chunk(
                 audio_chunks.append(chunk_bytes)
             audio = merge_synth_chunks(audio_chunks)
 
-        ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio)
+        ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio, level=active_level)
         # Also write the default variant to the audio_variants table so the
         # frontend's variant switcher can find it under the engine's name.
         default_engine = type(ctx.tts).__name__.lower().replace("ttsadapter", "")

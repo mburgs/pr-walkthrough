@@ -66,6 +66,9 @@ export interface TourPlan {
   chunks: TourChunk[];
   /** How familiar the reviewer is with the change/repo; default 'review'. */
   familiarity?: FamiliarityLevel;
+  /** When true the backend generated narration at all four levels;
+   * the player UI exposes a switcher to toggle live. */
+  multi_level?: boolean;
 }
 
 export interface RelatedCode {

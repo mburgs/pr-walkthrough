@@ -103,6 +103,15 @@ class TourPlan(BaseModel):
             "not this specific PR."
         ),
     )
+    multi_level: bool = Field(
+        False,
+        description=(
+            "When True the backend generates narration at all four "
+            "familiarity levels (parallel LLM calls) and the player UI "
+            "shows a level switcher so the reviewer can A/B them live. "
+            "`familiarity` then names the *initially active* level."
+        ),
+    )
 
 
 class RelatedCode(BaseModel):

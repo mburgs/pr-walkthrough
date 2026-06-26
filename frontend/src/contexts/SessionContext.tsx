@@ -10,13 +10,17 @@ interface SessionContextValue {
   currentNarration: ChunkNarration | null;
   narrationLoading: boolean;
   flags: Flag[];
+  /** Currently-active narration level. Falls back to plan.familiarity.
+   * Settable when the session is multi_level so the player can switch live. */
+  activeLevel: FamiliarityLevel;
+  setActiveLevel: (level: FamiliarityLevel) => void;
   setCurrentChunkId: (id: string) => void;
   addFlag: (flag: Omit<Flag, "flag_id" | "posted" | "posted_url">) => Promise<Flag>;
   updateFlag: (fid: string, partial: Partial<Flag>) => Promise<Flag>;
   postFlag: (fid: string) => Promise<Flag>;
   deleteFlag: (fid: string) => Promise<void>;
   submitFollowUp: (text: string, audioBlob?: Blob) => Promise<FollowUpAnswer>;
-  initSession: (prUrl: string, familiarity?: FamiliarityLevel) => Promise<void>;
+  initSession: (prUrl: string, familiarity?: FamiliarityLevel, multiLevel?: boolean) => Promise<void>;
   resumeSession: (sid: string) => Promise<void>;
   /** Wipe the current chunk's narration + audio cache and re-fetch. Returns
    * a busting key callers can append to URLs (e.g. audio src) so the browser
@@ -39,10 +43,12 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [narrationLoading, setNarrationLoading] = useState(false);
   const [flags, setFlags] = useState<Flag[]>([]);
   const [narrationGen, setNarrationGen] = useState<Record<string, number>>({});
+  // The user-selected familiarity level. Initialised from plan.familiarity
+  // when a session loads; the player exposes a switcher when plan.multi_level.
+  const [activeLevel, setActiveLevel] = useState<FamiliarityLevel>("review");
 
-  // Load narration whenever chunk changes, or this chunk's gen counter bumps.
-  // Watching the whole `narrationGen` map would refetch every chunk on any
-  // regenerate; pull the single per-chunk number into the dep list instead.
+  // Load narration whenever chunk changes, or this chunk's gen counter bumps,
+  // or the user toggles to a different familiarity level (ALL mode).
   const currentGen = currentChunkId ? (narrationGen[currentChunkId] ?? 0) : 0;
   useEffect(() => {
     if (!session || !currentChunkId) return;
@@ -50,7 +56,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setNarrationLoading(true);
     setCurrentNarration(null);
     api
-      .getChunkNarration(session.plan.session_id, currentChunkId)
+      .getChunkNarration(session.plan.session_id, currentChunkId, activeLevel)
       .then((narration) => {
         if (!cancelled) {
           setCurrentNarration(narration);
@@ -66,7 +72,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [session, currentChunkId, currentGen]);
+  }, [session, currentChunkId, currentGen, activeLevel]);
 
   // Reset all session-scoped state. Used by initSession + resumeSession so
   // we don't briefly show the previous session's narration/flags while the
@@ -79,14 +85,20 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setNarrationLoading(false);
     setFlags([]);
     setNarrationGen({});
+    setActiveLevel("review");
   }, []);
 
-  const initSession = useCallback(async (prUrl: string, familiarity: FamiliarityLevel = "review") => {
+  const initSession = useCallback(async (
+    prUrl: string,
+    familiarity: FamiliarityLevel = "review",
+    multiLevel: boolean = false,
+  ) => {
     resetSessionState();
     setLoading(true);
     setError(null);
     try {
-      const plan = await api.createSession(prUrl, familiarity);
+      const plan = await api.createSession(prUrl, familiarity, multiLevel);
+      setActiveLevel(plan.familiarity ?? "review");
       const state = await api.getSession(plan.session_id);
       setSession(state);
       setFlags(state.flags);
@@ -125,6 +137,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
       const state = await api.getSession(sid);
       setSession(state);
       setFlags(state.flags);
+      setActiveLevel(state.plan.familiarity ?? "review");
       if (state.plan.chunks.length > 0) {
         setCurrentChunkId(state.plan.chunks[0].chunk_id);
       }
@@ -192,6 +205,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         currentNarration,
         narrationLoading,
         flags,
+        activeLevel,
+        setActiveLevel,
         setCurrentChunkId,
         addFlag,
         updateFlag,

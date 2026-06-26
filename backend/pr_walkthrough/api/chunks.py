@@ -23,42 +23,58 @@ router = APIRouter()
 _LONG_POLL_TIMEOUT = 30.0  # seconds
 _POLL_INTERVAL = 0.2
 
-# Per (session_id, chunk_id) → in-flight narration task. Tracking the
-# task (not just a set membership flag) lets `/regenerate` cancel a
+# Per (session_id, chunk_id, level) → in-flight narration task. Tracking
+# the task (not just a set membership flag) lets `/regenerate` cancel a
 # still-running narration before it writes stale narration over the
-# freshly-kicked one. Without that, the older task could land last and
-# silently revert the regenerate to pre-regenerate content.
-_inflight: dict[tuple[str, str], asyncio.Task] = {}
+# freshly-kicked one. Level is part of the key because multi-level mode
+# runs four parallel narrations per chunk (one per familiarity level)
+# and each needs its own cancel-able handle.
+_inflight: dict[tuple[str, str, str], asyncio.Task] = {}
+
+# All four levels available. Used by ALL-mode prefetch to spawn one
+# worker per level when the session was created with multi_level=true.
+_ALL_LEVELS = ("tutorial", "tour", "review", "highlights")
 
 
 @router.get("/sessions/{sid}/chunks/{cid}", response_model=ChunkNarration)
 async def get_chunk_narration(
     sid: str,
     cid: str,
+    level: str | None = Query(None),
     ctx: AppContext = Depends(get_app_context),
 ) -> ChunkNarration:
-    """Long-poll: wait up to 30s for the chunk to be narrated, then 504.
+    """Long-poll: wait up to 30s for the chunk to be narrated at the
+    requested familiarity level, then 504.
 
-    Triggers narration on demand if no prefetch task is in flight, so chunks
-    beyond the initial prefetch (e.g. chunk 3+) get narrated when the user
-    actually navigates to them.
+    `level` defaults to the session's `plan.familiarity`. In ALL mode
+    (multi_level=true) the player passes whichever level the reviewer
+    has toggled to.
     """
     state = _ensure_session(sid, ctx)
-    _maybe_kick_off_narration(ctx, state.plan, sid, cid)
+    active = level or state.plan.familiarity
+    _maybe_kick_off_narration(ctx, state.plan, sid, cid, level=active)
     elapsed = 0.0
     while elapsed < _LONG_POLL_TIMEOUT:
-        narration = ctx.store.get_narration(sid, cid)
+        narration = ctx.store.get_narration(sid, cid, level=active)
         if narration is not None:
             return narration
         await asyncio.sleep(_POLL_INTERVAL)
         elapsed += _POLL_INTERVAL
-    raise HTTPException(status_code=504, detail=f"Chunk {cid!r} not ready within timeout")
+    raise HTTPException(status_code=504, detail=f"Chunk {cid!r}@{active} not ready within timeout")
 
 
-def _maybe_kick_off_narration(ctx: AppContext, plan, sid: str, cid: str) -> None:
-    if ctx.store.get_narration(sid, cid) is not None:
+def _maybe_kick_off_narration(
+    ctx: AppContext, plan, sid: str, cid: str, level: str | None = None,
+) -> None:
+    """Spawn a narration task for one (chunk, level) if not already running.
+
+    `level` defaults to the plan's configured familiarity. In ALL mode the
+    sessions endpoint calls this once per level to seed all four narrations.
+    """
+    active = level or plan.familiarity
+    if ctx.store.get_narration(sid, cid, level=active) is not None:
         return
-    key = (sid, cid)
+    key = (sid, cid, active)
     if key in _inflight:
         return
     chunk = next((c for c in plan.chunks if c.chunk_id == cid), None)
@@ -67,9 +83,9 @@ def _maybe_kick_off_narration(ctx: AppContext, plan, sid: str, cid: str) -> None
 
     async def _run():
         try:
-            await process_chunk(ctx, plan, chunk, sid)
+            await process_chunk(ctx, plan, chunk, sid, level=active)
         except asyncio.CancelledError:
-            log.info("narration cancelled for %s/%s", sid, cid)
+            log.info("narration cancelled for %s/%s@%s", sid, cid, active)
             raise
         finally:
             # Only drop the entry if it still points at this task — if a
@@ -78,7 +94,7 @@ def _maybe_kick_off_narration(ctx: AppContext, plan, sid: str, cid: str) -> None
             if current is asyncio.current_task():
                 _inflight.pop(key, None)
 
-    task = asyncio.create_task(_run(), name=f"narrate-{sid}-{cid}")
+    task = asyncio.create_task(_run(), name=f"narrate-{sid}-{cid}-{active}")
     _inflight[key] = task
 
 
@@ -125,9 +141,10 @@ async def get_repo_file(
 async def get_chunk_audio(
     sid: str,
     cid: str,
+    level: str | None = Query(None),
     ctx: AppContext = Depends(get_app_context),
 ) -> StreamingResponse:
-    """Stream the WAV audio for a chunk.
+    """Stream the WAV audio for a chunk at the requested level.
 
     Long-polls until the chunk_worker finishes synthesising and writes
     `audio_bytes` to the store. The chunk_worker streams adapter chunks
@@ -135,15 +152,16 @@ async def get_chunk_audio(
     can't safely stream them piecemeal to the browser — we wait until
     the worker has merged + cached the final WAV, then serve that.
     """
-    _ensure_session(sid, ctx)
-    _maybe_kick_off_narration_for_audio(ctx, sid, cid)
+    state = _ensure_session(sid, ctx)
+    active = level or state.plan.familiarity
+    _maybe_kick_off_narration_for_audio(ctx, sid, cid, level=active)
 
     # Long-poll for the cached final WAV
     elapsed = 0.0
     timeout = 120.0  # synth can take ~30-60s per chunk on kokoro
     poll = 0.5
     while elapsed < timeout:
-        audio = ctx.store.get_chunk_audio(sid, cid)
+        audio = ctx.store.get_chunk_audio(sid, cid, level=active)
         if audio is not None:
             return StreamingResponse(
                 _iter_bytes(audio),
@@ -172,33 +190,40 @@ async def regenerate_chunk(
     if chunk is None:
         raise HTTPException(status_code=404, detail=f"Chunk {cid!r} not in plan")
     ctx.store.delete_chunk_cache(sid, cid)
-    # Cancel any in-flight narration task for this chunk before kicking the
-    # new one. Otherwise the old task can finish *after* the new task and
-    # silently overwrite the regenerated narration with stale content.
-    key = (sid, cid)
-    prev = _inflight.pop(key, None)
-    if prev is not None and not prev.done():
-        prev.cancel()
-        try:
-            await prev
-        except (asyncio.CancelledError, Exception):
-            pass
-    _maybe_kick_off_narration(ctx, state.plan, sid, cid)
+    # Cancel any in-flight narration tasks for this chunk (across all
+    # levels) before kicking the new one. In single-level sessions only
+    # one entry will be present; in ALL mode there may be up to four.
+    to_cancel = [k for k in _inflight if k[0] == sid and k[1] == cid]
+    for k in to_cancel:
+        prev = _inflight.pop(k, None)
+        if prev is not None and not prev.done():
+            prev.cancel()
+            try:
+                await prev
+            except (asyncio.CancelledError, Exception):
+                pass
+    # Re-kick: if the session is multi_level, re-seed all four levels.
+    levels = _ALL_LEVELS if state.plan.multi_level else (state.plan.familiarity,)
+    for lvl in levels:
+        _maybe_kick_off_narration(ctx, state.plan, sid, cid, level=lvl)
     return JSONResponse({"status": "regenerating", "chunk_id": cid})
 
 
-def _maybe_kick_off_narration_for_audio(ctx: AppContext, sid: str, cid: str) -> None:
+def _maybe_kick_off_narration_for_audio(
+    ctx: AppContext, sid: str, cid: str, level: str | None = None,
+) -> None:
     """If the chunk hasn't been narrated yet, kick off the narration task.
 
     Same coalescing logic as the narration endpoint — without this, hitting
     /audio for a not-yet-narrated chunk would wait forever.
     """
-    if ctx.store.get_chunk_audio(sid, cid) is not None:
-        return
     state = ctx.store.get_session_state(sid)
     if state is None:
         return
-    _maybe_kick_off_narration(ctx, state.plan, sid, cid)
+    active = level or state.plan.familiarity
+    if ctx.store.get_chunk_audio(sid, cid, level=active) is not None:
+        return
+    _maybe_kick_off_narration(ctx, state.plan, sid, cid, level=active)
 
 
 def _ensure_session(sid: str, ctx: AppContext):

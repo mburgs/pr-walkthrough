@@ -38,6 +38,44 @@ def test_create_session_rejects_unknown_familiarity(client: TestClient) -> None:
     assert resp.status_code == 422
 
 
+def test_multi_level_persists_and_serves_per_level(client: TestClient, in_memory_ctx) -> None:
+    """When multi_level=true, the session creates one narration per level
+    on chunk 1 (FakeLLM responds synchronously) and the /chunks endpoint
+    serves a different narration depending on ?level=X."""
+    resp = client.post("/sessions", json={
+        "pr_url": PR_URL,
+        "familiarity": "review",
+        "multi_level": True,
+    })
+    assert resp.status_code == 201
+    plan = resp.json()
+    sid = plan["session_id"]
+    assert plan["multi_level"] is True
+
+    # Wait for chunk 1 to be narrated at each level (long-poll on each).
+    for level in ("tutorial", "tour", "review", "highlights"):
+        got = client.get(f"/sessions/{sid}/chunks/c1?level={level}")
+        assert got.status_code == 200, f"{level}: {got.text}"
+        # Store should now hold a per-level row
+        assert in_memory_ctx.store.get_narration(sid, "c1", level=level) is not None
+
+
+def test_single_level_session_only_narrates_at_chosen_level(client: TestClient, in_memory_ctx) -> None:
+    resp = client.post("/sessions", json={
+        "pr_url": PR_URL,
+        "familiarity": "tutorial",
+    })
+    assert resp.status_code == 201
+    sid = resp.json()["session_id"]
+    # Pull the chosen level — should land.
+    got = client.get(f"/sessions/{sid}/chunks/c1?level=tutorial")
+    assert got.status_code == 200
+    # Other levels: not prefetched. The endpoint would lazy-narrate them
+    # on demand, but if we check the store directly only `tutorial` is there.
+    assert in_memory_ctx.store.get_narration(sid, "c1", level="tutorial") is not None
+    assert in_memory_ctx.store.get_narration(sid, "c1", level="highlights") is None
+
+
 def test_get_session_state(client: TestClient) -> None:
     sid = _create_session(client)
     resp = client.get(f"/sessions/{sid}")

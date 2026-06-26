@@ -10,7 +10,7 @@ from pydantic import BaseModel
 from contracts.schemas import FamiliarityLevel, SessionState, TourPlan
 from pr_walkthrough.orchestration import AppContext
 
-from .chunks import _maybe_kick_off_narration
+from .chunks import _ALL_LEVELS, _maybe_kick_off_narration
 from .deps import get_app_context
 
 log = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ router = APIRouter()
 class CreateSessionRequest(BaseModel):
     pr_url: str
     familiarity: FamiliarityLevel = "review"
+    multi_level: bool = False
 
 
 @router.post("/sessions", response_model=TourPlan, status_code=201)
@@ -42,6 +43,7 @@ async def create_session(
     plan = plan.model_copy(update={
         "session_id": f"sess_{uuid.uuid4().hex[:12]}",
         "familiarity": body.familiarity,
+        "multi_level": body.multi_level,
     })
 
     ctx.store.create_session(plan)
@@ -50,8 +52,18 @@ async def create_session(
     # Routed through the same coalescing kicker that the long-poll endpoint
     # uses, so a later `GET /chunks/c1` doesn't fire a *second* task for the
     # same chunk while the prefetch is still in flight.
-    for chunk in plan.chunks[:2]:
-        _maybe_kick_off_narration(ctx, plan, plan.session_id, chunk.chunk_id)
+    # In ALL mode, seed all four familiarity levels for chunk 1 immediately;
+    # chunk 2 still only prefetches the active level (latency-vs-cost tradeoff
+    # — the reviewer can A/B chunk 1 while c2 streams behind it).
+    levels_for_prefetch = _ALL_LEVELS if plan.multi_level else (plan.familiarity,)
+    if plan.chunks:
+        for lvl in levels_for_prefetch:
+            _maybe_kick_off_narration(ctx, plan, plan.session_id, plan.chunks[0].chunk_id, level=lvl)
+    if len(plan.chunks) > 1:
+        _maybe_kick_off_narration(
+            ctx, plan, plan.session_id, plan.chunks[1].chunk_id,
+            level=plan.familiarity,
+        )
 
     return plan
 

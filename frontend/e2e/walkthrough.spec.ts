@@ -36,14 +36,13 @@ test.describe("homepage", () => {
     await expect(page.getByText(FIXTURE_TITLE).first()).toBeVisible({ timeout: 15_000 });
   });
 
-  test("familiarity selector shows 4 options, defaults to Review, posts choice", async ({ page }) => {
+  test("familiarity selector shows 5 options, defaults to Review, posts choice", async ({ page }) => {
     await page.goto("/");
-    // All 4 options rendered as radios; review is checked by default.
+    // 4 leaf levels + the "All" sentinel for multi-level mode.
     const radios = page.getByRole("radio");
-    await expect(radios).toHaveCount(4);
+    await expect(radios).toHaveCount(5);
     await expect(page.getByRole("radio", { name: "Review" })).toHaveAttribute("aria-checked", "true");
 
-    // Capture the POST body so we can verify the choice was sent
     const reqPromise = page.waitForRequest((req) =>
       req.url().endsWith("/sessions") && req.method() === "POST"
     );
@@ -56,7 +55,48 @@ test.describe("homepage", () => {
     const req = await reqPromise;
     const body = JSON.parse(req.postData() ?? "{}");
     expect(body.familiarity).toBe("tutorial");
+    expect(body.multi_level).toBe(false);
     expect(body.pr_url).toContain("pull/142");
+  });
+
+  test("All option posts multi_level=true and starts at review", async ({ page }) => {
+    await page.goto("/");
+    const reqPromise = page.waitForRequest((req) =>
+      req.url().endsWith("/sessions") && req.method() === "POST"
+    );
+    await page.getByRole("radio", { name: "All" }).click();
+    await expect(page.getByRole("radio", { name: "All" })).toHaveAttribute("aria-checked", "true");
+    await page.getByLabel("Pull request URL").fill("https://github.com/example-org/auth-service/pull/142");
+    await page.getByRole("button", { name: /Start walkthrough/ }).click();
+
+    const req = await reqPromise;
+    const body = JSON.parse(req.postData() ?? "{}");
+    expect(body.multi_level).toBe(true);
+    expect(body.familiarity).toBe("review");
+  });
+
+  test("level switcher appears in multi-level session and toggles activeLevel", async ({ page }) => {
+    await page.goto("/");
+    await page.getByRole("radio", { name: "All" }).click();
+    await page.getByLabel("Pull request URL").fill("https://github.com/example-org/auth-service/pull/142");
+    await page.getByRole("button", { name: /Start walkthrough/ }).click();
+
+    await expect(page.getByText(FIXTURE_TITLE).first()).toBeVisible({ timeout: 15_000 });
+
+    // 4 chips, review active by default
+    const switcher = page.getByRole("radiogroup", { name: "Narration depth" });
+    await expect(switcher).toBeVisible();
+    const chips = switcher.getByRole("radio");
+    await expect(chips).toHaveCount(4);
+    await expect(switcher.getByRole("radio", { name: "review" })).toHaveAttribute("aria-checked", "true");
+
+    // Toggle to tutorial — the next /chunks fetch must carry ?level=tutorial.
+    const tutorialFetchPromise = page.waitForRequest((req) =>
+      /\/sessions\/[^/]+\/chunks\/c1\?level=tutorial/.test(req.url())
+    );
+    await switcher.getByRole("radio", { name: "tutorial" }).click();
+    await tutorialFetchPromise;
+    await expect(switcher.getByRole("radio", { name: "tutorial" })).toHaveAttribute("aria-checked", "true");
   });
 });
 

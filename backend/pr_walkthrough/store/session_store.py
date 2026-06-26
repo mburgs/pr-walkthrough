@@ -36,9 +36,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS chunk_narrations (
     session_id  TEXT NOT NULL REFERENCES sessions(session_id),
     chunk_id    TEXT NOT NULL,
+    level       TEXT NOT NULL DEFAULT 'review',  -- FamiliarityLevel
     narration_json TEXT NOT NULL,    -- ChunkNarration JSON
     audio_bytes BLOB,                -- cached WAV; NULL until synthesised
-    PRIMARY KEY (session_id, chunk_id)
+    PRIMARY KEY (session_id, chunk_id, level)
 );
 
 CREATE TABLE IF NOT EXISTS follow_ups (
@@ -114,6 +115,14 @@ class SessionStore:
             # / flag / follow-up / audio_variants rows automatically.
             conn.execute("PRAGMA foreign_keys=ON")
             conn.row_factory = sqlite3.Row
+            # Dev-only migration: if an old `chunk_narrations` table exists
+            # without the `level` column, drop it before the CREATE TABLE
+            # IF NOT EXISTS runs. There's no production data + the schema
+            # carries no semantic meaning across sessions, so wiping is
+            # safer than half-migrating.
+            existing = conn.execute("PRAGMA table_info(chunk_narrations)").fetchall()
+            if existing and not any(c["name"] == "level" for c in existing):
+                conn.execute("DROP TABLE chunk_narrations")
             # CREATE TABLE IF NOT EXISTS is idempotent — safe to run per-connection.
             # Required so worker-thread connections also see the schema (esp. for
             # shared-cache in-memory, where the DB persists but each connection
@@ -156,36 +165,42 @@ class SessionStore:
 
     # ------------------------------------------------------------------ narrations
 
-    def save_narration(self, session_id: str, narration: ChunkNarration) -> None:
+    def save_narration(
+        self, session_id: str, narration: ChunkNarration, level: str = "review",
+    ) -> None:
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO chunk_narrations (session_id, chunk_id, narration_json)
-                   VALUES (?, ?, ?)
-                   ON CONFLICT(session_id, chunk_id) DO UPDATE SET narration_json=excluded.narration_json""",
-                (session_id, narration.chunk_id, narration.model_dump_json()),
+                """INSERT INTO chunk_narrations (session_id, chunk_id, level, narration_json)
+                   VALUES (?, ?, ?, ?)
+                   ON CONFLICT(session_id, chunk_id, level) DO UPDATE SET narration_json=excluded.narration_json""",
+                (session_id, narration.chunk_id, level, narration.model_dump_json()),
             )
 
-    def get_narration(self, session_id: str, chunk_id: str) -> ChunkNarration | None:
+    def get_narration(
+        self, session_id: str, chunk_id: str, level: str = "review",
+    ) -> ChunkNarration | None:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT narration_json FROM chunk_narrations WHERE session_id=? AND chunk_id=?",
-                (session_id, chunk_id),
+                "SELECT narration_json FROM chunk_narrations WHERE session_id=? AND chunk_id=? AND level=?",
+                (session_id, chunk_id, level),
             ).fetchone()
         if row is None:
             return None
         return ChunkNarration.model_validate_json(row["narration_json"])
 
-    def save_chunk_audio(self, session_id: str, chunk_id: str, audio: bytes) -> None:
+    def save_chunk_audio(
+        self, session_id: str, chunk_id: str, audio: bytes, level: str = "review",
+    ) -> None:
         with self._conn() as conn:
             conn.execute(
-                """INSERT INTO chunk_narrations (session_id, chunk_id, narration_json, audio_bytes)
-                   VALUES (?, ?, '', ?)
-                   ON CONFLICT(session_id, chunk_id) DO UPDATE SET audio_bytes=excluded.audio_bytes""",
-                (session_id, chunk_id, audio),
+                """INSERT INTO chunk_narrations (session_id, chunk_id, level, narration_json, audio_bytes)
+                   VALUES (?, ?, ?, '', ?)
+                   ON CONFLICT(session_id, chunk_id, level) DO UPDATE SET audio_bytes=excluded.audio_bytes""",
+                (session_id, chunk_id, level, audio),
             )
 
     def delete_chunk_cache(self, session_id: str, chunk_id: str) -> None:
-        """Wipe one chunk's narration + audio + all variants.
+        """Wipe one chunk's narration + audio + all variants across all levels.
 
         Used by the regenerate endpoint to force the worker to re-narrate
         and re-synth — useful when the user has updated the narrate prompt
@@ -201,11 +216,13 @@ class SessionStore:
                 (session_id, chunk_id),
             )
 
-    def get_chunk_audio(self, session_id: str, chunk_id: str) -> bytes | None:
+    def get_chunk_audio(
+        self, session_id: str, chunk_id: str, level: str = "review",
+    ) -> bytes | None:
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT audio_bytes FROM chunk_narrations WHERE session_id=? AND chunk_id=?",
-                (session_id, chunk_id),
+                "SELECT audio_bytes FROM chunk_narrations WHERE session_id=? AND chunk_id=? AND level=?",
+                (session_id, chunk_id, level),
             ).fetchone()
         if row is None or row["audio_bytes"] is None:
             return None

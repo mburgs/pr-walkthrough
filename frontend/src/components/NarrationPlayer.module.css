@@ -244,3 +244,35 @@
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* ---------- Multi-level (ALL mode) switcher ---------- */
+.levelSwitcher {
+  display: flex;
+  gap: 4px;
+  padding: 6px 0 4px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.levelChip {
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  text-transform: lowercase;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.levelChip:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+.levelChipActive {
+  background: var(--accent-muted);
+  color: var(--accent);
+  border-color: var(--accent);
+}

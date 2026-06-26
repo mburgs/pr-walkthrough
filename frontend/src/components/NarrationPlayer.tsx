@@ -16,7 +16,7 @@ const SPEEDS = [1, 1.25, 1.5, 1.75, 2] as const;
 const SPEED_STORAGE_KEY = "pr-walkthrough.playbackRate";
 
 export default function NarrationPlayer({ chunk, narration, loading, onSegmentChange }: Props) {
-  const { session, setCurrentChunkId, regenerateCurrentChunk, narrationGen } = useSession();
+  const { session, setCurrentChunkId, regenerateCurrentChunk, narrationGen, activeLevel, setActiveLevel } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const playRef = useRef<HTMLDivElement>(null);
@@ -43,8 +43,11 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   // bytes). Keyed per chunk so regenerating c1 doesn't invalidate c2's
   // already-cached audio blob in the browser.
   const chunkGen = narrationGen[chunk.chunk_id] ?? 0;
+  // Audio URL embeds activeLevel so swapping the level re-fetches the
+  // per-level WAV (the backend keys audio_bytes by (sid, cid, level)).
+  // `?v=` is the regenerate cache-bust; `&level=` selects the variant.
   const audioUrl = session
-    ? `${getAudioUrl(session.plan.session_id, chunk.chunk_id)}?v=${chunkGen}`
+    ? `${getAudioUrl(session.plan.session_id, chunk.chunk_id, activeLevel)}&v=${chunkGen}`
     : null;
 
   const handleRegenerate = async () => {
@@ -192,6 +195,24 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
       ) : !loading && narration ? (
         <div className={styles.script}>{narration.narration}</div>
       ) : null}
+
+      {session?.plan.multi_level && (
+        <div className={styles.levelSwitcher} role="radiogroup" aria-label="Narration depth">
+          {(["tutorial","tour","review","highlights"] as const).map(lvl => (
+            <button
+              key={lvl}
+              type="button"
+              role="radio"
+              aria-checked={activeLevel === lvl}
+              className={`${styles.levelChip} ${activeLevel === lvl ? styles.levelChipActive : ""}`}
+              onClick={() => setActiveLevel(lvl)}
+              title={`Switch to ${lvl} depth`}
+            >
+              {lvl}
+            </button>
+          ))}
+        </div>
+      )}
 
       <div className={styles.controls}>
         <div className={styles.playGroup} ref={playRef}>
