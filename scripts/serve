@@ -1,24 +1,29 @@
 #!/usr/bin/env bash
-# Launch the pr-walkthrough backend.
+# Launch the pr-walkthrough stack: backend + frontend.
 #
-# Works from any checkout (main repo or worktree). Looks for a `.venv`
-# in this repo first, then falls back to any worktree's `.venv` — so a
-# single shared venv (in one of the worktrees) is enough; no need to
-# install twice.
+# Picks free localhost ports for both, wires CORS + VITE_BACKEND_URL so
+# the dev server can talk to the backend, prints the URL to open, and
+# tears both processes down on Ctrl-C.
+#
+# Works from any checkout (main repo or worktree). Locates a usable
+# `.venv` in this repo first, then falls back to any worktree's `.venv`
+# — so one shared venv is enough.
 #
 # Env knobs:
-#   PR_WALKTHROUGH_REPO_ROOT   target repo the PRs live in (jedi root).
-#                              Default: /Users/michoel/code/calsync
-#   PR_WALKTHROUGH_PORT        Default: 8200
-#   PR_WALKTHROUGH_TTS_CONCURRENCY / _LLM_CONCURRENCY
-#                              Bump if your machine has headroom.
+#   PR_WALKTHROUGH_REPO_ROOT          target repo the PRs live in (jedi root)
+#                                     default: /Users/michoel/code/calsync
+#   PR_WALKTHROUGH_PORT               pin the backend port (else auto-pick)
+#   PR_WALKTHROUGH_FRONTEND_PORT      pin the frontend port (else auto-pick)
+#   PR_WALKTHROUGH_TTS_CONCURRENCY    bump if the machine has headroom
+#   PR_WALKTHROUGH_LLM_CONCURRENCY
 #
-# Extra args after `serve` are passed straight to uvicorn, e.g.
-#   scripts/serve --reload
+# Extra args are forwarded to uvicorn (e.g. `scripts/serve --reload`).
 
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+
+# --- venv discovery -------------------------------------------------------
 
 venv=""
 if [ -x "$repo_root/.venv/bin/uvicorn" ]; then
@@ -44,20 +49,77 @@ EOF
   exit 1
 fi
 
-export PR_WALKTHROUGH_REPO_ROOT="${PR_WALKTHROUGH_REPO_ROOT:-/Users/michoel/code/calsync}"
-port="${PR_WALKTHROUGH_PORT:-8200}"
+# Bind to port 0 then read what the OS handed back. A tiny window exists
+# where another process could grab the same port before we re-bind, but
+# in practice this is fine for a dev launcher.
+pick_port() {
+  "$venv/bin/python" - <<'PY'
+import socket
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+}
 
-# `contracts/` lives at the repo root (sibling of backend/), so it has to
-# be on sys.path alongside backend/ — otherwise `from contracts.schemas
-# import …` blows up at import time. Prepend both so uvicorn's own
-# `--app-dir` doesn't shadow them.
+backend_port="${PR_WALKTHROUGH_PORT:-$(pick_port)}"
+frontend_port="${PR_WALKTHROUGH_FRONTEND_PORT:-$(pick_port)}"
+
+# --- env wiring -----------------------------------------------------------
+
+# CORS: only allow the specific frontend origin we're spinning up. The
+# backend's default allow-list spans common Vite ports but doesn't cover
+# a randomly-picked one, so narrow + explicit.
+export PR_WALKTHROUGH_ALLOWED_ORIGINS="http://localhost:$frontend_port,http://127.0.0.1:$frontend_port"
+# Frontend reads VITE_BACKEND_URL at build/serve time (defaults to "" =
+# same origin, which trips MSW for fixture mode); pointing it at the
+# backend disables MSW and routes through to uvicorn.
+export VITE_BACKEND_URL="http://127.0.0.1:$backend_port"
+export PR_WALKTHROUGH_REPO_ROOT="${PR_WALKTHROUGH_REPO_ROOT:-/Users/michoel/code/calsync}"
+# contracts/ sits at the repo root (sibling of backend/) — both have to
+# be importable for the editable install + the `from contracts.*` imports.
 export PYTHONPATH="$repo_root:$repo_root/backend${PYTHONPATH:+:$PYTHONPATH}"
 
-echo "→ using venv: $venv"
-echo "→ repo root:  $PR_WALKTHROUGH_REPO_ROOT"
-echo "→ listening:  http://127.0.0.1:$port"
+# Frontend deps: unlike .venv we don't fall back to a worktree's
+# node_modules — vite resolves vite.config.ts + src/ relative to its
+# cwd, so running from main with worktree node_modules would mix the
+# two. Auto-install once if missing.
+fe_dir="$repo_root/frontend"
+if [ ! -x "$fe_dir/node_modules/.bin/vite" ]; then
+  echo "→ frontend deps missing in $fe_dir; running 'npm install' (one-time)…"
+  ( cd "$fe_dir" && npm install ) \
+    || { echo "npm install failed" >&2; exit 1; }
+fi
 
-exec "$venv/bin/uvicorn" pr_walkthrough.main:app \
-  --host 127.0.0.1 \
-  --port "$port" \
-  "$@"
+echo "→ venv:       $venv"
+echo "→ repo root:  $PR_WALKTHROUGH_REPO_ROOT"
+echo "→ backend:    http://127.0.0.1:$backend_port"
+echo "→ frontend:   http://localhost:$frontend_port  ← open this in your browser"
+echo
+
+# --- process supervision --------------------------------------------------
+
+backend_pid=""
+frontend_pid=""
+cleanup() {
+  trap - INT TERM EXIT
+  if [ -n "$backend_pid" ]; then kill "$backend_pid" 2>/dev/null || true; fi
+  if [ -n "$frontend_pid" ]; then kill "$frontend_pid" 2>/dev/null || true; fi
+  wait 2>/dev/null || true
+}
+trap cleanup INT TERM EXIT
+
+# awk-prefixed log streams so backend + frontend output is distinguishable
+# in the same terminal. fflush keeps line-by-line ordering tight.
+"$venv/bin/uvicorn" pr_walkthrough.main:app \
+    --host 127.0.0.1 --port "$backend_port" "$@" \
+  2>&1 | awk '{print "[be] " $0; fflush()}' &
+backend_pid=$!
+
+( cd "$repo_root/frontend" && \
+  npm run dev -- --port "$frontend_port" --strictPort \
+) 2>&1 | awk '{print "[fe] " $0; fflush()}' &
+frontend_pid=$!
+
+# Exit when either child dies; the trap will kill the survivor.
+wait -n
