@@ -552,6 +552,92 @@ class ClaudeLLMAdapter:
     # answer_follow_up
     # ------------------------------------------------------------------
 
+    async def answer_follow_up_streaming(
+        self,
+        plan: TourPlan,
+        history: list[ChunkNarration],
+        follow_up: FollowUp,
+    ) -> "_FollowUpStream":
+        """Stream the follow-up answer's `answer_text` field token-by-token.
+
+        Returns a `_FollowUpStream` — an AsyncIterator[str] of decoded
+        characters from the streaming tool_input JSON, with a final
+        `.get_result()` for the structured FollowUpAnswer after the
+        stream is exhausted. Pattern mirrors narrate_chunk_streaming.
+
+        Why streaming the JSON: the API streams tool_use as
+        `input_json_delta` events carrying partial JSON fragments. We
+        watch for the `"answer_text":"` key prefix, then emit decoded
+        characters of its string value until the closing quote. The rest
+        of the structured fields (new_concerns, references) come through
+        in the final assembled message; we re-validate the whole shape
+        from there.
+        """
+        user_message = build_follow_up_user_message(plan, history, follow_up)
+        result_holder: list[FollowUpAnswer] = []
+
+        async def _token_stream() -> AsyncIterator[str]:
+            in_answer = False
+            prefix_buf = ""
+            ANSWER_KEY = '"answer_text": "'
+            ANSWER_KEY_ALT = '"answer_text":"'
+
+            async with self._client.messages.stream(
+                model=self._narrate_model,
+                max_tokens=2048,
+                system=[
+                    {
+                        "type": "text",
+                        "text": SYSTEM_PROMPT,
+                        "cache_control": {"type": "ephemeral"},
+                    }
+                ],
+                tools=[ANSWER_FOLLOW_UP_TOOL],
+                tool_choice={"type": "tool", "name": "emit_follow_up_answer"},
+                messages=[{"role": "user", "content": user_message}],
+            ) as stream:
+                async for event in stream:
+                    if event.type != "content_block_delta":
+                        continue
+                    delta = event.delta
+                    if not hasattr(delta, "partial_json"):
+                        continue
+                    chunk_json = delta.partial_json
+
+                    if not in_answer:
+                        prefix_buf += chunk_json
+                        for key in (ANSWER_KEY, ANSWER_KEY_ALT):
+                            idx = prefix_buf.find(key)
+                            if idx == -1:
+                                continue
+                            in_answer = True
+                            remainder = prefix_buf[idx + len(key):]
+                            decoded, done = _extract_narration_fragment(remainder, [])
+                            if decoded:
+                                yield decoded
+                            if done:
+                                in_answer = False
+                            prefix_buf = ""
+                            break
+                    else:
+                        decoded, done = _extract_narration_fragment(chunk_json, [])
+                        if decoded:
+                            yield decoded
+                        if done:
+                            in_answer = False
+
+                final_msg = await stream.get_final_message()
+
+            raw = self._extract_tool_input(final_msg, "emit_follow_up_answer")
+            try:
+                result_holder.append(FollowUpAnswer.model_validate(raw))
+            except ValidationError as e:
+                raise ValueError(
+                    f"FollowUpAnswer schema mismatch:\n{e}\n\nRaw: {json.dumps(raw, indent=2)}"
+                ) from e
+
+        return _FollowUpStream(_token_stream(), result_holder)
+
     async def answer_follow_up(
         self,
         plan: TourPlan,
@@ -817,6 +903,31 @@ class _StreamWrapper:
 
     def get_result(self) -> ChunkNarration:
         """Return the ChunkNarration. Must be called after the iterator is exhausted."""
+        if not self._result_holder:
+            raise RuntimeError(
+                "Stream not yet fully consumed — call get_result() after iterating."
+            )
+        return self._result_holder[0]
+
+
+class _FollowUpStream:
+    """Mirror of `_StreamWrapper` for follow-up answers. Same shape:
+    async iterator of decoded text characters from the streaming
+    `answer_text` JSON field, plus `.get_result()` for the structured
+    `FollowUpAnswer` after the iterator is exhausted.
+    """
+
+    def __init__(self, gen: AsyncIterator[str], result_holder: list[FollowUpAnswer]) -> None:
+        self._gen = gen
+        self._result_holder = result_holder
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self._gen
+
+    async def __anext__(self) -> str:
+        return await self._gen.__anext__()  # type: ignore[attr-defined]
+
+    def get_result(self) -> FollowUpAnswer:
         if not self._result_holder:
             raise RuntimeError(
                 "Stream not yet fully consumed — call get_result() after iterating."

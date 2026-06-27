@@ -1,13 +1,26 @@
-"""Follow-up routes: POST /sessions/{sid}/follow-up, GET .../follow-up/{aid}/audio."""
+"""Follow-up routes: POST /sessions/{sid}/follow-up, GET .../follow-up/{aid}/audio.
+
+The POST endpoint returns Server-Sent Events so the frontend can render
+the answer as it's generated. Two event types:
+
+  event: token   data: {"text": "...delta..."}    one per partial-JSON
+                                                  fragment of answer_text
+  event: final   data: {"answer": {...},          fires once after audio
+                       "audio_url": "..."}        synth completes
+
+The transport is SSE (not WebSocket) — the protocol is one-way and SSE
+keeps middleware (proxies, CORS) simpler.
+"""
 
 from __future__ import annotations
 
+import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from contracts.schemas import FollowUp, FollowUpAnswer
+from contracts.schemas import FollowUp
 from pr_walkthrough.orchestration import AppContext
 
 from .deps import get_app_context
@@ -16,13 +29,18 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
-@router.post("/sessions/{sid}/follow-up", response_model=FollowUpAnswer)
+@router.post("/sessions/{sid}/follow-up")
 async def post_follow_up(
     sid: str,
     request: Request,
     ctx: AppContext = Depends(get_app_context),
-) -> Response:
-    """Accept JSON FollowUp or raw audio.  Returns FollowUpAnswer + audio URL header."""
+) -> StreamingResponse:
+    """Stream the follow-up answer back as SSE.
+
+    Accepts the same request bodies as before (JSON FollowUp or raw
+    audio). Response shape changed from JSON to text/event-stream — the
+    frontend client handles both transports for transition.
+    """
     state = ctx.store.get_session_state(sid)
     if state is None:
         raise HTTPException(status_code=404, detail=f"Session {sid!r} not found")
@@ -43,25 +61,69 @@ async def post_follow_up(
         )
 
     history = ctx.store.list_follow_up_history(sid)
-    answer = await ctx.llm.answer_follow_up(state.plan, history, follow_up)
 
-    answer_id = ctx.store.save_follow_up(sid, follow_up, answer)
+    async def event_stream():
+        from pr_walkthrough.tts._wav import merge_synth_chunks
 
-    # Synth audio for the answer. Same merge dance as chunk_worker — adapters
-    # mix full WAVs and raw PCM, so re-wrap as one valid WAV before caching.
-    from pr_walkthrough.tts._wav import merge_synth_chunks
+        # Heartbeat / opener — tells the client we're alive and avoids
+        # buffered proxies holding the connection silent.
+        yield "event: open\ndata: {}\n\n"
 
-    audio_chunks: list[bytes] = []
-    async for wav_chunk in ctx.tts.synth(answer.answer_text):
-        audio_chunks.append(wav_chunk)
-    ctx.store.save_follow_up_audio(sid, answer_id, merge_synth_chunks(audio_chunks))
+        # Stream the LLM tokens. The semaphore gate matches process_chunk
+        # so a busy multi-level chunk burst doesn't elbow this call out.
+        async with ctx.llm_semaphore:
+            try:
+                stream = await ctx.llm.answer_follow_up_streaming(
+                    state.plan, history, follow_up,
+                )
+            except Exception as e:
+                log.exception("follow-up LLM call failed")
+                yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+                return
 
-    audio_url = f"/sessions/{sid}/follow-up/{answer_id}/audio"
+            async for token in stream:
+                yield f"event: token\ndata: {json.dumps({'text': token})}\n\n"
 
-    return Response(
-        content=answer.model_dump_json(),
-        media_type="application/json",
-        headers={"X-Answer-Audio-Url": audio_url},
+            try:
+                answer = stream.get_result()
+            except Exception as e:
+                log.exception("follow-up result extraction failed")
+                yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+                return
+
+        answer_id = ctx.store.save_follow_up(sid, follow_up, answer)
+
+        # Audio synth runs after the text is finalised so the player has
+        # something to play. Gated on the TTS semaphore for the same
+        # memory-budget reasons as chunk audio.
+        async with ctx.tts_semaphore:
+            try:
+                audio_chunks: list[bytes] = []
+                async for wav_chunk in ctx.tts.synth(answer.answer_text):
+                    audio_chunks.append(wav_chunk)
+                ctx.store.save_follow_up_audio(
+                    sid, answer_id, merge_synth_chunks(audio_chunks),
+                )
+            except Exception:
+                # Audio is a nice-to-have; surface the answer even if synth
+                # blows up. The frontend will see audio_url 404 and recover.
+                log.exception("follow-up audio synth failed (continuing)")
+
+        audio_url = f"/sessions/{sid}/follow-up/{answer_id}/audio"
+        final_payload = {
+            "answer": answer.model_dump(),
+            "audio_url": audio_url,
+            "answer_id": answer_id,
+        }
+        yield f"event: final\ndata: {json.dumps(final_payload)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",  # disable nginx-style proxy buffering
+        },
     )
 
 

@@ -55,3 +55,36 @@ class FakeLLM:
     ) -> FollowUpAnswer:
         raw = json.loads((_FIXTURES / "follow_up_example.json").read_text())
         return FollowUpAnswer.model_validate(raw["answer"])
+
+    async def answer_follow_up_streaming(
+        self,
+        plan: TourPlan,
+        history: list[Any],
+        follow_up: FollowUp,
+    ) -> "_FakeFollowUpStream":
+        raw = json.loads((_FIXTURES / "follow_up_example.json").read_text())
+        answer = FollowUpAnswer.model_validate(raw["answer"])
+        return _FakeFollowUpStream(answer)
+
+
+class _FakeFollowUpStream:
+    """Mirrors the real `_FollowUpStream` shape: an async iterator that
+    emits the answer text in word-sized fragments, plus `.get_result()`.
+    Word-sized so the consumer can demonstrate the streaming UX without
+    a real LLM. Per-token delay kept tiny so tests aren't slow."""
+
+    def __init__(self, answer: FollowUpAnswer) -> None:
+        self._answer = answer
+
+    def __aiter__(self):
+        return self._gen()
+
+    async def _gen(self):
+        text = self._answer.answer_text
+        # Yield in small chunks so the consumer sees progressive updates
+        chunk_size = 4
+        for i in range(0, len(text), chunk_size):
+            yield text[i : i + chunk_size]
+
+    def get_result(self) -> FollowUpAnswer:
+        return self._answer

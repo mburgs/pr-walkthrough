@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback, useEffect } from "react";
-import type { SessionState, Flag, ChunkNarration, FamiliarityLevel, FollowUpAnswer } from "../contracts";
+import type { SessionState, Flag, ChunkNarration, FamiliarityLevel } from "../contracts";
 import * as api from "../api/client";
 
 /** Coarse-grained state of the initial session load. Drives the
@@ -25,7 +25,11 @@ interface SessionContextValue {
   updateFlag: (fid: string, partial: Partial<Flag>) => Promise<Flag>;
   postFlag: (fid: string) => Promise<Flag>;
   deleteFlag: (fid: string) => Promise<void>;
-  submitFollowUp: (text: string, audioBlob?: Blob) => Promise<FollowUpAnswer>;
+  submitFollowUp: (
+    text: string,
+    audioBlob?: Blob,
+    callbacks?: api.FollowUpStreamCallbacks,
+  ) => Promise<api.FollowUpStreamResult>;
   initSession: (prUrl: string, familiarity?: FamiliarityLevel, multiLevel?: boolean) => Promise<void>;
   resumeSession: (sid: string) => Promise<void>;
   /** Wipe the current chunk's narration + audio cache and re-fetch. Returns
@@ -207,9 +211,15 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   );
 
   const submitFollowUp = useCallback(
-    async (text: string, audioBlob?: Blob) => {
+    async (
+      text: string,
+      audioBlob?: Blob,
+      callbacks?: api.FollowUpStreamCallbacks,
+    ) => {
       if (!session) throw new Error("No session");
-      return api.submitFollowUp(session.plan.session_id, currentChunkId, text, audioBlob);
+      return api.submitFollowUp(
+        session.plan.session_id, currentChunkId, text, audioBlob, callbacks,
+      );
     },
     [session, currentChunkId]
   );

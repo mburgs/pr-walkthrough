@@ -100,28 +100,121 @@ export function getFollowUpAudioUrl(sid: string, aid: string): string {
   return `${BASE}/sessions/${sid}/follow-up/${aid}/audio`;
 }
 
+/** Result returned by the streaming follow-up call once the SSE stream
+ * has been fully consumed: the final structured answer plus the URL
+ * the audio for it lives at. */
+export interface FollowUpStreamResult {
+  answer: FollowUpAnswer;
+  audioUrl: string;
+  answerId: string;
+}
+
+/** Callbacks for {@link submitFollowUp}. All are optional. */
+export interface FollowUpStreamCallbacks {
+  /** Fired for each `event: token` — `text` is a delta to append. */
+  onToken?: (text: string) => void;
+  /** Fired once when the stream opens (server is alive). */
+  onOpen?: () => void;
+}
+
+/**
+ * Submit a follow-up question and consume the SSE response stream.
+ *
+ * The backend now streams the answer token-by-token via Server-Sent
+ * Events, so the UI can show typing as it arrives. This client parses
+ * the event stream manually (no `EventSource` because POST + binary
+ * body aren't supported by it) and resolves with the final structured
+ * payload once `event: final` is seen.
+ */
 export async function submitFollowUp(
   sid: string,
   chunkId: string | null,
   text: string,
-  audioBlob?: Blob
-): Promise<FollowUpAnswer> {
-  if (audioBlob) {
-    return request<FollowUpAnswer>(`/sessions/${sid}/follow-up`, {
-      method: "POST",
-      headers: { "Content-Type": audioBlob.type || "audio/webm" },
-      body: audioBlob,
-    });
+  audioBlob: Blob | undefined,
+  callbacks: FollowUpStreamCallbacks = {},
+): Promise<FollowUpStreamResult> {
+  const init: RequestInit = audioBlob
+    ? {
+        method: "POST",
+        headers: { "Content-Type": audioBlob.type || "audio/webm", Accept: "text/event-stream" },
+        body: audioBlob,
+      }
+    : {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
+        body: JSON.stringify({
+          chunk_id: chunkId,
+          question_text: text,
+          transcript_confidence: null,
+        }),
+      };
+
+  const resp = await fetch(`${BASE}/sessions/${sid}/follow-up`, init);
+  if (!resp.ok || !resp.body) {
+    throw new Error(`POST /follow-up ${resp.status}: ${await resp.text().catch(() => "")}`);
   }
-  return request<FollowUpAnswer>(`/sessions/${sid}/follow-up`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chunk_id: chunkId,
-      question_text: text,
-      transcript_confidence: null,
-    }),
-  });
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let finalResult: FollowUpStreamResult | null = null;
+
+  // SSE frames are separated by blank lines. We accumulate into `buffer`
+  // and flush whenever we see a "\n\n", processing each frame.
+  while (true) {
+    const { done, value } = await reader.read();
+    if (value) buffer += decoder.decode(value, { stream: true });
+    if (done) break;
+
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) !== -1) {
+      const frame = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const parsed = parseSseFrame(frame);
+      if (!parsed) continue;
+      const { event, data } = parsed;
+      if (event === "open") {
+        callbacks.onOpen?.();
+      } else if (event === "token") {
+        try {
+          const payload = JSON.parse(data) as { text?: string };
+          if (payload.text) callbacks.onToken?.(payload.text);
+        } catch {
+          /* malformed frame — skip rather than abort the whole stream */
+        }
+      } else if (event === "final") {
+        const payload = JSON.parse(data) as {
+          answer: FollowUpAnswer;
+          audio_url: string;
+          answer_id: string;
+        };
+        finalResult = {
+          answer: payload.answer,
+          audioUrl: payload.audio_url,
+          answerId: payload.answer_id,
+        };
+      } else if (event === "error") {
+        const payload = JSON.parse(data) as { message?: string };
+        throw new Error(payload.message ?? "Follow-up stream errored");
+      }
+    }
+  }
+
+  if (!finalResult) {
+    throw new Error("Follow-up stream ended without a `final` event");
+  }
+  return finalResult;
+}
+
+function parseSseFrame(frame: string): { event: string; data: string } | null {
+  let event = "message";
+  let data = "";
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data = line.slice(5).trim();
+  }
+  if (!data) return null;
+  return { event, data };
 }
 
 export function createFlag(

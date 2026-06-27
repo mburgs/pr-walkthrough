@@ -115,6 +115,34 @@ def test_chunk_audio_returns_wav(client: TestClient) -> None:
     assert resp.content[8:12] == b"WAVE"
 
 
+def _parse_sse(text: str) -> list[tuple[str, dict]]:
+    """Parse SSE-formatted text into a list of (event_type, payload) tuples.
+
+    Test helper for the follow-up endpoint, which now streams events
+    instead of returning JSON. Keeps the rest of the tests focused on
+    behaviour rather than transport mechanics.
+    """
+    events: list[tuple[str, dict]] = []
+    current_event = "message"
+    for chunk in text.split("\n\n"):
+        if not chunk.strip():
+            continue
+        event = "message"
+        data = ""
+        for line in chunk.splitlines():
+            if line.startswith("event:"):
+                event = line[len("event:"):].strip()
+            elif line.startswith("data:"):
+                data = line[len("data:"):].strip()
+        if data:
+            try:
+                events.append((event, json.loads(data)))
+            except json.JSONDecodeError:
+                events.append((event, {"raw": data}))
+        current_event = event  # noqa: F841 (kept for debugging)
+    return events
+
+
 def test_follow_up_json(client: TestClient) -> None:
     sid = _create_session(client)
     _wait_for_chunk(client, sid, "c1")
@@ -127,9 +155,15 @@ def test_follow_up_json(client: TestClient) -> None:
         },
     )
     assert resp.status_code == 200, resp.text
-    answer = resp.json()
-    assert answer["answer_text"]
-    assert "X-Answer-Audio-Url" in resp.headers
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    events = _parse_sse(resp.text)
+    types = [e[0] for e in events]
+    # We expect at least one token + a final
+    assert "token" in types
+    assert "final" in types
+    final = next(payload for (etype, payload) in events if etype == "final")
+    assert final["answer"]["answer_text"]
+    assert final["audio_url"].startswith("/sessions/")
 
 
 def test_follow_up_audio_url_returns_wav(client: TestClient) -> None:
@@ -141,7 +175,9 @@ def test_follow_up_audio_url_returns_wav(client: TestClient) -> None:
         json={"chunk_id": "c1", "question_text": "Why hard DELETE?"},
     )
     assert fu_resp.status_code == 200
-    audio_url = fu_resp.headers["X-Answer-Audio-Url"]
+    events = _parse_sse(fu_resp.text)
+    final = next(payload for (etype, payload) in events if etype == "final")
+    audio_url = final["audio_url"]
 
     audio_resp = client.get(audio_url)
     assert audio_resp.status_code == 200
@@ -159,8 +195,29 @@ def test_follow_up_audio_content_type(client: TestClient) -> None:
         headers={"content-type": "audio/webm"},
     )
     assert resp.status_code == 200
-    answer = resp.json()
-    assert answer["answer_text"]  # FakeSTT + FakeLLM combo works
+    events = _parse_sse(resp.text)
+    final = next(payload for (etype, payload) in events if etype == "final")
+    assert final["answer"]["answer_text"]  # FakeSTT + FakeLLM combo works
+
+
+def test_follow_up_streams_tokens_before_final(client: TestClient) -> None:
+    """Regression: the SSE stream should emit one or more `token` events
+    *before* the `final` event, not just dump everything at the end."""
+    sid = _create_session(client)
+    resp = client.post(
+        f"/sessions/{sid}/follow-up",
+        json={"chunk_id": "c1", "question_text": "Is the migration safe?"},
+    )
+    assert resp.status_code == 200
+    events = _parse_sse(resp.text)
+    types = [e[0] for e in events]
+    # First event after open should be a token (not final)
+    non_open = [t for t in types if t != "open"]
+    assert non_open[0] == "token", f"expected first non-open event to be a token, got {non_open[:3]}"
+    # Tokens should sum to the full answer text
+    streamed = "".join(p.get("text", "") for (t, p) in events if t == "token")
+    final = next(p for (t, p) in events if t == "final")
+    assert streamed == final["answer"]["answer_text"]
 
 
 def test_create_flag(client: TestClient) -> None:

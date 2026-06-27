@@ -138,12 +138,44 @@ export const handlers = [
     return HttpResponse.redirect("/silent.wav");
   }),
 
-  // POST /sessions/:sid/follow-up — text or audio follow-up
+  // POST /sessions/:sid/follow-up — text or audio follow-up.
+  // Mirrors the real backend's SSE response: one `open`, several
+  // `token` events that together spell out answer_text, then `final`.
   http.post("/sessions/:sid/follow-up", async () => {
-    // Always return the fixture answer
-    return HttpResponse.json(followUpExample.answer, {
+    const answer = followUpExample.answer;
+    const audioUrl = `/sessions/${SESSION_ID}/follow-up/ans_001/audio`;
+    const encoder = new TextEncoder();
+
+    const stream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        const enqueue = (event: string, payload: unknown) => {
+          controller.enqueue(
+            encoder.encode(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`),
+          );
+        };
+        enqueue("open", {});
+        // Emit answer_text in small chunks with a tiny delay so the UI
+        // can demonstrate streaming + the e2e tests can assert that
+        // tokens precede the final event.
+        const text = answer.answer_text;
+        const stride = Math.max(1, Math.ceil(text.length / 8));
+        for (let i = 0; i < text.length; i += stride) {
+          enqueue("token", { text: text.slice(i, i + stride) });
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        enqueue("final", {
+          answer,
+          audio_url: audioUrl,
+          answer_id: "ans_001",
+        });
+        controller.close();
+      },
+    });
+
+    return new HttpResponse(stream, {
       headers: {
-        "X-Answer-Audio-Url": `/sessions/${SESSION_ID}/follow-up/ans_001/audio`,
+        "Content-Type": "text/event-stream",
+        "Cache-Control": "no-cache",
       },
     });
   }),
