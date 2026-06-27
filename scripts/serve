@@ -47,6 +47,12 @@ fi
 export PR_WALKTHROUGH_REPO_ROOT="${PR_WALKTHROUGH_REPO_ROOT:-/Users/michoel/code/calsync}"
 port="${PR_WALKTHROUGH_PORT:-8200}"
 
+# `contracts/` lives at the repo root (sibling of backend/), so it has to
+# be on sys.path alongside backend/ — otherwise `from contracts.schemas
+# import …` blows up at import time. Prepend both so uvicorn's own
+# `--app-dir` doesn't shadow them.
+export PYTHONPATH="$repo_root:$repo_root/backend${PYTHONPATH:+:$PYTHONPATH}"
+
 echo "→ using venv: $venv"
 echo "→ repo root:  $PR_WALKTHROUGH_REPO_ROOT"
 echo "→ listening:  http://127.0.0.1:$port"
@@ -54,5 +60,4 @@ echo "→ listening:  http://127.0.0.1:$port"
 exec "$venv/bin/uvicorn" pr_walkthrough.main:app \
   --host 127.0.0.1 \
   --port "$port" \
-  --app-dir "$repo_root/backend" \
   "$@"
