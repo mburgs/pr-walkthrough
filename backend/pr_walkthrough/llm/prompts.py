@@ -207,7 +207,12 @@ The reviewer is broadly familiar with the change already and wants only \
 the high-impact moments. Cut orienting context. Be ruthless about \
 trimming anything that's description, transition, or summary. Aim for \
 2-3 dense segments; one of them can be a single sentence if that's \
-where the substance lives.\
+where the substance lives. Every segment must still carry an `anchor` \
+pointing at the specific lines the highlight is about — that's how the \
+UI shows the reviewer where to look. The standard "omit anchor for \
+intros/transitions" carve-out does NOT apply here: at this depth there \
+are no intros or transitions, only the substance, and the substance is \
+always at specific lines.\
 """,
 }
 

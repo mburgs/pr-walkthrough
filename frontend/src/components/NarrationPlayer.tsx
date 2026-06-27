@@ -145,9 +145,13 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
 
   const handleCanPlay = () => {
     setAudioReady(true);
+    // Re-assert playbackRate here too. The [rate, audioUrl] effect above
+    // sometimes loses to the browser's internal reset when src changes —
+    // by `canplay` the element is fully ready and the set sticks.
+    const audio = audioRef.current;
+    if (audio) audio.playbackRate = rate;
     // If the user already clicked play, honour it now
     if (pendingPlay) {
-      const audio = audioRef.current;
       if (audio) {
         audio.play().catch((e) => setError(String(e)));
         setPlaying(true);
