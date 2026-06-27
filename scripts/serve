@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Launch the pr-walkthrough backend.
+#
+# Works from any checkout (main repo or worktree). Looks for a `.venv`
+# in this repo first, then falls back to any worktree's `.venv` — so a
+# single shared venv (in one of the worktrees) is enough; no need to
+# install twice.
+#
+# Env knobs:
+#   PR_WALKTHROUGH_REPO_ROOT   target repo the PRs live in (jedi root).
+#                              Default: /Users/michoel/code/calsync
+#   PR_WALKTHROUGH_PORT        Default: 8200
+#   PR_WALKTHROUGH_TTS_CONCURRENCY / _LLM_CONCURRENCY
+#                              Bump if your machine has headroom.
+#
+# Extra args after `serve` are passed straight to uvicorn, e.g.
+#   scripts/serve --reload
+
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+
+venv=""
+if [ -x "$repo_root/.venv/bin/uvicorn" ]; then
+  venv="$repo_root/.venv"
+else
+  shopt -s nullglob
+  for candidate in "$repo_root"/.claude/worktrees/*/.venv; do
+    if [ -x "$candidate/bin/uvicorn" ]; then
+      venv="$candidate"
+      break
+    fi
+  done
+fi
+
+if [ -z "$venv" ]; then
+  cat >&2 <<'EOF'
+no usable .venv found
+
+Create one from the main repo with:
+  python3.12 -m venv .venv
+  .venv/bin/pip install -e backend
+EOF
+  exit 1
+fi
+
+export PR_WALKTHROUGH_REPO_ROOT="${PR_WALKTHROUGH_REPO_ROOT:-/Users/michoel/code/calsync}"
+port="${PR_WALKTHROUGH_PORT:-8200}"
+
+echo "→ using venv: $venv"
+echo "→ repo root:  $PR_WALKTHROUGH_REPO_ROOT"
+echo "→ listening:  http://127.0.0.1:$port"
+
+exec "$venv/bin/uvicorn" pr_walkthrough.main:app \
+  --host 127.0.0.1 \
+  --port "$port" \
+  --app-dir "$repo_root/backend" \
+  "$@"
