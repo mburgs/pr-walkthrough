@@ -109,10 +109,24 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
+# Auto-reload backend code on edit. Watch only the source dirs (NOT
+# .venv — would be glacial) and exclude noisy artefacts so a SQLite
+# write doesn't kick a restart. Disable by setting NO_RELOAD=1.
+reload_args=()
+if [ -z "${NO_RELOAD:-}" ]; then
+  reload_args=(
+    --reload
+    --reload-dir "$repo_root/backend"
+    --reload-dir "$repo_root/contracts"
+    --reload-exclude "*.db" --reload-exclude "*.db-wal" --reload-exclude "*.db-shm"
+    --reload-exclude "*.wav" --reload-exclude "*.log"
+  )
+fi
+
 # awk-prefixed log streams so backend + frontend output is distinguishable
 # in the same terminal. fflush keeps line-by-line ordering tight.
 "$venv/bin/uvicorn" pr_walkthrough.main:app \
-    --host 127.0.0.1 --port "$backend_port" "$@" \
+    --host 127.0.0.1 --port "$backend_port" "${reload_args[@]}" "$@" \
   2>&1 | awk '{print "[be] " $0; fflush()}' &
 backend_pid=$!
 

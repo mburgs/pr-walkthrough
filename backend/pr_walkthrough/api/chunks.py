@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
@@ -20,7 +21,12 @@ from .deps import get_app_context
 log = logging.getLogger(__name__)
 router = APIRouter()
 
-_LONG_POLL_TIMEOUT = 30.0  # seconds
+# Narration long-poll budget. On a slow tier (low TTS/LLM concurrency,
+# multi-level prefetch, tutorial-depth narrations) one chunk can take
+# 60-90s end-to-end; the old 30s was too tight and surfaced spurious
+# 504s. Env-overridable for users on faster boxes that want shorter
+# polls (less idle socket time).
+_LONG_POLL_TIMEOUT = float(os.environ.get("PR_WALKTHROUGH_NARRATION_TIMEOUT", "120"))
 _POLL_INTERVAL = 0.2
 
 # Per (session_id, chunk_id, level) → in-flight narration task. Tracking
@@ -158,7 +164,11 @@ async def get_chunk_audio(
 
     # Long-poll for the cached final WAV
     elapsed = 0.0
-    timeout = 120.0  # synth can take ~30-60s per chunk on kokoro
+    # Audio synth runs after narration. On tts=1 boxes the per-chunk synth
+    # serialises with everything else (multi-level prefetch fans out 4
+    # synths per chunk) so the worst-case wait stacks. Generous default
+    # plus an env override to keep things tweakable.
+    timeout = float(os.environ.get("PR_WALKTHROUGH_AUDIO_TIMEOUT", "300"))
     poll = 0.5
     while elapsed < timeout:
         audio = ctx.store.get_chunk_audio(sid, cid, level=active)
