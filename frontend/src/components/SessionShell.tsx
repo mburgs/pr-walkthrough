@@ -7,10 +7,22 @@ import RightRail from "./RightRail";
 import FollowUpInput from "./FollowUpInput";
 import styles from "./SessionShell.module.css";
 
+// Persist rail-collapse state across reloads. localStorage keys are
+// stable across PRs / sessions — the layout preference is the user's,
+// not the session's.
+const LEFT_COLLAPSED_KEY = "pr-walkthrough.leftCollapsed";
+const RIGHT_COLLAPSED_KEY = "pr-walkthrough.rightCollapsed";
+
+function loadBool(key: string): boolean {
+  try { return localStorage.getItem(key) === "1"; } catch { return false; }
+}
+
 export default function SessionShell() {
   const { session, currentChunkId, currentNarration, narrationLoading } = useSession();
-  const [leftCollapsed, setLeftCollapsed] = useState(false);
-  const [rightCollapsed, setRightCollapsed] = useState(false);
+  const [leftCollapsed, setLeftCollapsed] = useState<boolean>(() => loadBool(LEFT_COLLAPSED_KEY));
+  const [rightCollapsed, setRightCollapsed] = useState<boolean>(() => loadBool(RIGHT_COLLAPSED_KEY));
+  useEffect(() => { localStorage.setItem(LEFT_COLLAPSED_KEY, leftCollapsed ? "1" : "0"); }, [leftCollapsed]);
+  useEffect(() => { localStorage.setItem(RIGHT_COLLAPSED_KEY, rightCollapsed ? "1" : "0"); }, [rightCollapsed]);
   // Active diff anchor — last-writer-wins between audio segment progression
   // and manual side-panel clicks. The DiffViewer reacts to whatever is here.
   const [activeAnchor, setActiveAnchor] = useState<CodeAnchor | null>(null);
