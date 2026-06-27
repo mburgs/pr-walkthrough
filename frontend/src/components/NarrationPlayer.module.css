@@ -276,3 +276,63 @@
   color: var(--accent);
   border-color: var(--accent);
 }
+
+/* ---------- Mini player (collapsed rail) ---------- */
+
+.miniPlayer {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 4px 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.miniBtn {
+  width: 36px;
+  height: 32px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 120ms, color 120ms, border-color 120ms;
+}
+.miniBtn:hover:not(:disabled) {
+  border-color: var(--text-muted);
+  color: var(--accent);
+}
+.miniBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.miniSpeed {
+  width: 36px;
+  height: 24px;
+  background: transparent;
+  color: var(--text-muted);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms;
+}
+.miniSpeed:hover {
+  color: var(--text);
+  border-color: var(--text-muted);
+}
+
+.miniChunk {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}

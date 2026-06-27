@@ -49,6 +49,12 @@ export default function RightRail({
 }: Props) {
   const { flags } = useSession();
   const [openRelated, setOpenRelated] = useState<RelatedCode | null>(null);
+  // When a CollapsedDot is clicked, remember which section the user
+  // wanted; after the rail expands we scroll to it + auto-open it.
+  // Cleared on a short delay so subsequent collapse/expand cycles don't
+  // keep re-opening the same one.
+  const [pendingSection, setPendingSection] = useState<string | null>(null);
+  const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const sectionCounts = useMemo(() => ({
     concerns:   narration?.concerns.length ?? 0,
@@ -57,128 +63,163 @@ export default function RightRail({
     flags:      flags.length,
   }), [narration, flags]);
 
-  if (collapsed) {
-    const totalConcerns = sectionCounts.concerns;
-    return (
-      <div className={styles.collapsedRail}>
+  const handleDotClick = (key: string) => {
+    if (collapsed) onToggle();
+    setPendingSection(key);
+  };
+
+  // Once we're expanded with a pending target, scroll it into view and
+  // clear after a tick. The Section reads pendingSection itself to auto-open.
+  useEffect(() => {
+    if (collapsed || !pendingSection) return;
+    const el = sectionRefs.current[pendingSection];
+    if (el) {
+      // rAF gives the layout one frame to settle from the expand transition
+      requestAnimationFrame(() => {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+    }
+    const t = setTimeout(() => setPendingSection(null), 800);
+    return () => clearTimeout(t);
+  }, [collapsed, pendingSection]);
+
+  return (
+    <div className={collapsed ? styles.collapsedRail : styles.rail}>
+      {/* Header — toggle is always the first child so React keeps it stable */}
+      {collapsed ? (
         <button
           className={styles.collapseToggle}
           onClick={onToggle}
           title="Expand insights panel"
           aria-label="Expand insights panel"
         >‹</button>
+      ) : (
+        <div className={styles.railHeader}>
+          <span className={styles.railLabel}>
+            {chunk ? <><span className={styles.railChunkId}>{chunk.chunk_id}</span> · {chunk.files.length} file{chunk.files.length === 1 ? "" : "s"}</> : "—"}
+          </span>
+          <button
+            className={styles.collapseToggle}
+            onClick={onToggle}
+            title="Collapse insights panel"
+            aria-label="Collapse insights panel"
+          >›</button>
+        </div>
+      )}
+
+      {/* NarrationPlayer is rendered in BOTH modes so its <audio> stays
+          mounted and playback continues across rail collapse. */}
+      {chunk && (
+        <NarrationPlayer
+          chunk={chunk}
+          narration={narration}
+          loading={narrationLoading}
+          onSegmentChange={onSegmentChange}
+          compact={collapsed}
+        />
+      )}
+
+      {collapsed ? (
         <div className={styles.collapsedStack}>
-          <CollapsedDot label="Concerns" count={totalConcerns} variant="warn" />
-          <CollapsedDot label="Related" count={sectionCounts.related} variant="muted" />
-          <CollapsedDot label="Look closer" count={sectionCounts.look} variant="muted" />
-          <CollapsedDot label="Flags" count={sectionCounts.flags} variant="accent" />
+          <CollapsedDot label="Concerns" count={sectionCounts.concerns} variant="warn"
+            onClick={() => handleDotClick("concerns")} />
+          <CollapsedDot label="Related" count={sectionCounts.related} variant="muted"
+            onClick={() => handleDotClick("related")} />
+          <CollapsedDot label="Look closer" count={sectionCounts.look} variant="muted"
+            onClick={() => handleDotClick("look")} />
+          <CollapsedDot label="Flags" count={sectionCounts.flags} variant="accent"
+            onClick={() => handleDotClick("flags")} />
         </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className={styles.rail}>
-      <div className={styles.railHeader}>
-        <span className={styles.railLabel}>
-          {chunk ? <><span className={styles.railChunkId}>{chunk.chunk_id}</span> · {chunk.files.length} file{chunk.files.length === 1 ? "" : "s"}</> : "—"}
-        </span>
-        <button
-          className={styles.collapseToggle}
-          onClick={onToggle}
-          title="Collapse insights panel"
-          aria-label="Collapse insights panel"
-        >›</button>
-      </div>
-
-      <div className={styles.scroll}>
-        {/* Narration section sits at the top, always expanded */}
-        <div className={styles.narrationBlock}>
-          {chunk && (
-            <NarrationPlayer
-              chunk={chunk}
-              narration={narration}
-              loading={narrationLoading}
-              onSegmentChange={onSegmentChange}
-            />
-          )}
-        </div>
-
-        <Section
-          title="Concerns"
-          count={sectionCounts.concerns}
-          severity={highestSeverity(narration?.concerns ?? [])}
-          defaultOpen={sectionCounts.concerns > 0}
-        >
-          {narration?.concerns.map((c, i) => (
-            <ConcernRow
-              key={i}
-              concern={c}
-              chunkId={narration.chunk_id}
-              activeAnchor={activeAnchor}
-              onAnchorClick={onAnchorClick}
-            />
-          ))}
-        </Section>
-
-        <Section
-          title="Related"
-          count={sectionCounts.related}
-          defaultOpen={false}
-        >
-          {narration?.related_code.map((r, i) => {
-            const lang = languageFor(r.anchor.file);
-            const hast = highlightSnippet(r.snippet, lang);
-            return (
-              <div
+      ) : (
+        <div className={styles.scroll}>
+          <Section
+            key="concerns"
+            title="Concerns"
+            count={sectionCounts.concerns}
+            severity={highestSeverity(narration?.concerns ?? [])}
+            defaultOpen={sectionCounts.concerns > 0}
+            triggerOpen={pendingSection === "concerns"}
+            innerRef={(el) => { sectionRefs.current["concerns"] = el; }}
+          >
+            {narration?.concerns.map((c, i) => (
+              <ConcernRow
                 key={i}
-                className={`${styles.row} ${styles.clickable}`}
-                role="button"
-                tabIndex={0}
-                onClick={() => setOpenRelated(r)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    setOpenRelated(r);
-                  }
-                }}
-                title="Click to expand"
-              >
-                <div className={styles.rowHeader}>
-                  <span className={styles.relationship}>{r.relationship}</span>
-                  <Anchor file={r.anchor.file} line={r.anchor.line_range} />
+                concern={c}
+                chunkId={narration.chunk_id}
+                activeAnchor={activeAnchor}
+                onAnchorClick={onAnchorClick}
+              />
+            ))}
+          </Section>
+
+          <Section
+            key="related"
+            title="Related"
+            count={sectionCounts.related}
+            defaultOpen={false}
+            triggerOpen={pendingSection === "related"}
+            innerRef={(el) => { sectionRefs.current["related"] = el; }}
+          >
+            {narration?.related_code.map((r, i) => {
+              const lang = languageFor(r.anchor.file);
+              const hast = highlightSnippet(r.snippet, lang);
+              return (
+                <div
+                  key={i}
+                  className={`${styles.row} ${styles.clickable}`}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setOpenRelated(r)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setOpenRelated(r);
+                    }
+                  }}
+                  title="Click to expand"
+                >
+                  <div className={styles.rowHeader}>
+                    <span className={styles.relationship}>{r.relationship}</span>
+                    <Anchor file={r.anchor.file} line={r.anchor.line_range} />
+                  </div>
+                  <pre className={styles.snippet}>
+                    {hast ? renderHast(hast) : r.snippet}
+                  </pre>
                 </div>
-                <pre className={styles.snippet}>
-                  {hast ? renderHast(hast) : r.snippet}
-                </pre>
-              </div>
-            );
-          })}
-        </Section>
+              );
+            })}
+          </Section>
 
-        <Section
-          title="Look closer"
-          count={sectionCounts.look}
-          defaultOpen={false}
-        >
-          {narration?.look_closer_for.map((item, i) => (
-            <div key={i} className={styles.bullet}>{item}</div>
-          ))}
-        </Section>
+          <Section
+            key="look"
+            title="Look closer"
+            count={sectionCounts.look}
+            defaultOpen={false}
+            triggerOpen={pendingSection === "look"}
+            innerRef={(el) => { sectionRefs.current["look"] = el; }}
+          >
+            {narration?.look_closer_for.map((item, i) => (
+              <div key={i} className={styles.bullet}>{item}</div>
+            ))}
+          </Section>
 
-        <Section
-          title="Flags"
-          count={sectionCounts.flags}
-          defaultOpen={sectionCounts.flags > 0}
-          accent={sectionCounts.flags > 0}
-        >
-          {flags.length === 0 ? (
-            <div className={styles.emptyHint}>Add concerns to the flag list from above, then post to GitHub.</div>
-          ) : (
-            flags.map((f) => <FlagRow key={f.flag_id} flag={f} />)
-          )}
-        </Section>
-      </div>
+          <Section
+            key="flags"
+            title="Flags"
+            count={sectionCounts.flags}
+            defaultOpen={sectionCounts.flags > 0}
+            accent={sectionCounts.flags > 0}
+            triggerOpen={pendingSection === "flags"}
+            innerRef={(el) => { sectionRefs.current["flags"] = el; }}
+          >
+            {flags.length === 0 ? (
+              <div className={styles.emptyHint}>Add concerns to the flag list from above, then post to GitHub.</div>
+            ) : (
+              flags.map((f) => <FlagRow key={f.flag_id} flag={f} />)
+            )}
+          </Section>
+        </div>
+      )}
       {openRelated && (
         <RelatedCodeModal
           related={openRelated}
@@ -195,12 +236,18 @@ interface SectionProps {
   title: string;
   count: number;
   defaultOpen?: boolean;
+  /** Force-open the section when this flips true (e.g. user clicked a
+   * collapsed-rail dot for this section). Section still respects user
+   * toggles after — this is a one-shot signal, not a controlled prop. */
+  triggerOpen?: boolean;
   severity?: "low" | "medium" | "high" | null;
   accent?: boolean;
+  /** Outer-div ref so the parent can scrollIntoView this section. */
+  innerRef?: (el: HTMLDivElement | null) => void;
   children: React.ReactNode;
 }
 
-function Section({ title, count, defaultOpen = false, severity, accent, children }: SectionProps) {
+function Section({ title, count, defaultOpen = false, triggerOpen, severity, accent, innerRef, children }: SectionProps) {
   const [open, setOpen] = useState(defaultOpen);
   // Sync open state when defaultOpen flips (e.g. when narration arrives and
   // populates a section that started empty). Once the user toggles manually
@@ -209,9 +256,18 @@ function Section({ title, count, defaultOpen = false, severity, accent, children
   useEffect(() => {
     if (!userTouched.current) setOpen(defaultOpen);
   }, [defaultOpen]);
+  // External trigger (collapsed-rail dot click) opens the section.
+  // Tracked with a previous-value ref so we only react on the rising edge.
+  const prevTrigger = useRef(false);
+  useEffect(() => {
+    if (triggerOpen && !prevTrigger.current && count > 0) {
+      setOpen(true);
+    }
+    prevTrigger.current = !!triggerOpen;
+  }, [triggerOpen, count]);
   const isEmpty = count === 0;
   return (
-    <div className={`${styles.section} ${open ? styles.sectionOpen : ""}`}>
+    <div ref={innerRef} className={`${styles.section} ${open ? styles.sectionOpen : ""}`}>
       <button
         className={styles.sectionHeader}
         onClick={() => { if (!isEmpty) { userTouched.current = true; setOpen((v) => !v); } }}
@@ -382,17 +438,22 @@ function SeverityBadge({ severity }: { severity: "low" | "medium" | "high" }) {
   return <span className={`${styles.sev} ${styles[`sev_${severity}`]}`}>{severity}</span>;
 }
 
-function CollapsedDot({ label, count, variant }: {
+function CollapsedDot({ label, count, variant, onClick }: {
   label: string; count: number; variant: "info" | "warn" | "muted" | "accent";
+  onClick?: () => void;
 }) {
   return (
-    <div
+    <button
+      type="button"
       className={`${styles.collapsedDot} ${styles[`dot_${variant}`]} ${count === 0 ? styles.dotEmpty : ""}`}
-      title={`${label}: ${count}`}
+      title={`${label}: ${count} — click to expand`}
+      onClick={onClick}
+      disabled={count === 0}
+      aria-label={`Open ${label} section (${count})`}
     >
       <span className={styles.dotLabel}>{label[0]}</span>
       {count > 0 && <span className={styles.dotCount}>{count}</span>}
-    </div>
+    </button>
   );
 }
 

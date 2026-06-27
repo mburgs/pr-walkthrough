@@ -358,8 +358,17 @@
   background: var(--surface-2);
   color: var(--text);
   font-family: var(--font-mono);
-  cursor: default;
+  cursor: pointer;
   position: relative;
+  border: 1px solid transparent;
+  transition: border-color 120ms, transform 120ms;
+}
+.collapsedDot:hover:not(:disabled) {
+  border-color: var(--text-muted);
+  transform: translateY(-1px);
+}
+.collapsedDot:disabled {
+  cursor: not-allowed;
 }
 .dot_info   { background: rgba(124, 156, 255, 0.10); color: var(--info); }
 .dot_warn   { background: var(--sev-med-bg);          color: var(--sev-med-fg); }

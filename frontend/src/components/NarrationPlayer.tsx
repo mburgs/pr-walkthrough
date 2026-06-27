@@ -10,12 +10,14 @@ interface Props {
   loading: boolean;
   /** Notified whenever the playhead crosses into a different segment. -1 = none. */
   onSegmentChange?: (segmentIndex: number) => void;
+  /** Mini mode for the collapsed rail — just play/skip/speed, no script. */
+  compact?: boolean;
 }
 
 const SPEEDS = [1, 1.25, 1.5, 1.75, 2] as const;
 const SPEED_STORAGE_KEY = "pr-walkthrough.playbackRate";
 
-export default function NarrationPlayer({ chunk, narration, loading, onSegmentChange }: Props) {
+export default function NarrationPlayer({ chunk, narration, loading, onSegmentChange, compact = false }: Props) {
   const { session, setCurrentChunkId, regenerateCurrentChunk, narrationGen, activeLevel, setActiveLevel } = useSession();
   const [menuOpen, setMenuOpen] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
@@ -167,7 +169,62 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   const handleEnded = () => setPlaying(false);
   const handleError = () => { setError("Audio failed to load"); setPlaying(false); };
 
+  // The audio element is rendered ONCE at the end as a stable sibling
+  // of whichever UI mode we're in. That way, toggling compact↔full
+  // doesn't unmount the <audio> tag, so playback keeps going across the
+  // user collapsing the rail. Both UI modes are wrapped in branches
+  // that React will remount, but the audio sibling persists.
+  const audioEl = audioUrl ? (
+    <audio
+      ref={audioRef}
+      src={audioUrl}
+      onEnded={handleEnded}
+      onError={handleError}
+      onTimeUpdate={handleTimeUpdate}
+      onSeeked={handleTimeUpdate}
+      onCanPlay={handleCanPlay}
+      preload="auto"
+      style={{ display: "none" }}
+    />
+  ) : null;
+
+  if (compact) {
+    return (
+      <>
+        <div className={styles.miniPlayer}>
+          <button
+            className={styles.miniBtn}
+            onClick={handlePlay}
+            disabled={loading || !narration || regenerating}
+            title={playing ? "Pause" : "Play"}
+            aria-label={playing ? "Pause" : "Play"}
+          >
+            {pendingPlay
+              ? <span className={styles.spinner} aria-hidden />
+              : playing ? "⏸" : "▶"}
+          </button>
+          <button
+            className={styles.miniBtn}
+            onClick={handleSkip}
+            disabled={!nextChunkId}
+            title={nextChunkId ? `Next chunk (${nextChunkId})` : "Last chunk"}
+            aria-label="Next chunk"
+          >⏭</button>
+          <button
+            className={styles.miniSpeed}
+            onClick={cycleRate}
+            title="Playback speed"
+            aria-label={`Playback speed ${rate}×`}
+          >{rate}×</button>
+          <span className={styles.miniChunk}>{chunk.chunk_id}</span>
+        </div>
+        {audioEl}
+      </>
+    );
+  }
+
   return (
+    <>
     <div className={styles.player}>
       {loading && (
         <div className={styles.loading}>
@@ -267,19 +324,8 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
         <span className={styles.chunkLabel}>{chunk.chunk_id}</span>
       </div>
 
-      {audioUrl && (
-        <audio
-          ref={audioRef}
-          src={audioUrl}
-          onEnded={handleEnded}
-          onError={handleError}
-          onTimeUpdate={handleTimeUpdate}
-          onSeeked={handleTimeUpdate}
-          onCanPlay={handleCanPlay}
-          preload="auto"
-          style={{ display: "none" }}
-        />
-      )}
     </div>
+    {audioEl}
+    </>
   );
 }
