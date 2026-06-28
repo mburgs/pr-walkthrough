@@ -63,6 +63,11 @@ _ENV_VAD_KEY = "PR_WALKTHROUGH_WHISPER_VAD"
 # directory (one file per call, named with a uuid + the mime extension).
 # Useful for "did the browser actually send audio?" debugging.
 _ENV_DUMP_KEY = "PR_WALKTHROUGH_STT_DUMP_DIR"
+# Language hint passed to Whisper. Default "en" — auto-detect was
+# misfiring on short English clips and transcribing as e.g. Welsh or
+# Maori. Set "" (empty) to re-enable auto-detect; set "fr"/"de"/etc.
+# to lock to another language.
+_ENV_LANGUAGE_KEY = "PR_WALKTHROUGH_WHISPER_LANGUAGE"
 
 
 def _get_model_name() -> str:
@@ -178,11 +183,15 @@ class WhisperSTTAdapter:
         peak = float(np.max(np.abs(audio_array))) if len(audio_array) else 0.0
 
         vad_on = _vad_enabled()
+        # Empty env value → None (auto-detect). Any other value passed
+        # straight through to faster-whisper (ISO 639-1 code).
+        lang_env = os.environ.get(_ENV_LANGUAGE_KEY, "en").strip()
+        language = lang_env or None
         log.info(
             "STT in: bytes=%d mime=%s decoded=%.2fs (decode=%.0fms) "
-            "rms=%.4f peak=%.3f vad=%s model=%s",
+            "rms=%.4f peak=%.3f vad=%s lang=%s model=%s",
             len(audio_bytes), mime, duration_s, decode_ms,
-            rms, peak, vad_on, self._model_name,
+            rms, peak, vad_on, language or "auto", self._model_name,
         )
 
         # Cheap silence sentinel — RMS below this is essentially zero
@@ -200,7 +209,7 @@ class WhisperSTTAdapter:
         t1 = time.perf_counter()
         segments_gen, info = model.transcribe(
             audio_array,
-            language=None,  # auto-detect
+            language=language,
             beam_size=5,
             vad_filter=vad_on,
         )
