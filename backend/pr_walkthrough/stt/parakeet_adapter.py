@@ -28,6 +28,7 @@ Env knobs
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import os
 import tempfile
@@ -77,6 +78,14 @@ class ParakeetSTTAdapter:
         self._device = device
         self._compute_type = compute_type
         self._model: BaseParakeet | None = None
+        # MLX binds Metal streams per-thread, so model load + every
+        # transcribe call MUST run on the same OS thread — otherwise
+        # mx.eval raises "There is no Stream(gpu, 0) in current
+        # thread." A dedicated single-worker executor pins all MLX
+        # work to one thread for the adapter's lifetime.
+        self._executor = concurrent.futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="parakeet-mlx",
+        )
 
     def _load_model(self) -> "BaseParakeet":
         if self._model is None:
@@ -87,13 +96,15 @@ class ParakeetSTTAdapter:
         return self._model
 
     def warmup(self) -> None:
-        """Force model load now (download + weight materialise).
+        """Force model load now on the dedicated MLX thread.
 
         AppContext calls this at startup so the first voice request
-        doesn't pay the multi-second model load latency. No-op once
-        the model is cached in memory.
+        doesn't pay the multi-second model load latency. Critically,
+        the load runs on the same executor thread that later
+        transcribe calls use — see the per-thread MLX stream
+        constraint in __init__'s comment.
         """
-        self._load_model()
+        self._executor.submit(self._load_model).result()
 
     @staticmethod
     def _aggregate_confidence(result) -> float:
@@ -171,5 +182,12 @@ class ParakeetSTTAdapter:
         return text, confidence
 
     async def transcribe(self, audio: bytes, mime: str) -> tuple[str, float]:
-        """Transcribe *audio* bytes; same shape as WhisperSTTAdapter."""
-        return await asyncio.to_thread(self._transcribe_sync, audio, mime)
+        """Transcribe *audio* bytes; matches the STTAdapter protocol.
+
+        Dispatches to the adapter's dedicated executor so MLX work
+        always runs on the same thread that loaded the model.
+        """
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            self._executor, self._transcribe_sync, audio, mime,
+        )
