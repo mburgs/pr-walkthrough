@@ -115,6 +115,10 @@ export interface FollowUpStreamCallbacks {
   onToken?: (text: string) => void;
   /** Fired once when the stream opens (server is alive). */
   onOpen?: () => void;
+  /** Voice path only: STT is in progress, no transcript yet. */
+  onTranscribing?: () => void;
+  /** Voice path only: STT finished; `text` is what the model heard. */
+  onTranscribed?: (text: string, confidence: number | null) => void;
 }
 
 /**
@@ -175,6 +179,13 @@ export async function submitFollowUp(
       const { event, data } = parsed;
       if (event === "open") {
         callbacks.onOpen?.();
+      } else if (event === "transcribing") {
+        callbacks.onTranscribing?.();
+      } else if (event === "question") {
+        try {
+          const payload = JSON.parse(data) as { text?: string; confidence?: number | null };
+          callbacks.onTranscribed?.(payload.text ?? "", payload.confidence ?? null);
+        } catch { /* skip malformed */ }
       } else if (event === "token") {
         try {
           const payload = JSON.parse(data) as { text?: string };

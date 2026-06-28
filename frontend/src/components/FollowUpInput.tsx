@@ -33,7 +33,7 @@ import styles from "./FollowUpInput.module.css";
  * mid-conversation without copy-pasting.
  */
 
-type Phase = "awaiting" | "streaming" | "complete" | "error";
+type Phase = "transcribing" | "awaiting" | "streaming" | "complete" | "error";
 
 interface Turn {
   id: string;
@@ -124,18 +124,42 @@ function TurnView({ turn }: { turn: Turn }) {
   const finalized = turn.phase === "complete" || turn.phase === "error";
   const displayed = useTypewriter(target, finalized);
 
-  const isInFlight = turn.phase === "awaiting" || turn.phase === "streaming";
+  const isInFlight =
+    turn.phase === "transcribing" || turn.phase === "awaiting" || turn.phase === "streaming";
   const stillRevealing = displayed.length < target.length;
+
+  // For voice turns, the question text only fills in after STT returns
+  // (event: question). Show a placeholder while we're still
+  // transcribing so the user knows what's happening.
+  const renderQuestion = () => {
+    if (turn.isVoice && turn.phase === "transcribing" && !turn.question) {
+      return (
+        <span className={styles.questionPending}>
+          <span className={styles.spinner} aria-hidden /> transcribing audio…
+        </span>
+      );
+    }
+    return (
+      <span className={styles.questionText}>
+        {turn.question || (turn.isVoice ? "(no speech detected)" : "")}
+      </span>
+    );
+  };
 
   return (
     <div className={styles.turn}>
       <div className={styles.question}>
         <span className={styles.questionLabel}>{turn.isVoice ? "🎙" : "›"}</span>
-        <span className={styles.questionText}>{turn.question || (turn.isVoice ? "(voice)" : "")}</span>
+        {renderQuestion()}
       </div>
       <div className={styles.answer}>
         <div className={styles.answerHeader}>
           <span className={styles.answerLabel}>Answer</span>
+          {turn.phase === "transcribing" && (
+            <span className={styles.answerStatus}>
+              <span className={styles.spinner} aria-hidden /> waiting on transcript
+            </span>
+          )}
           {turn.phase === "awaiting" && (
             <span className={styles.answerStatus}>
               <span className={styles.spinner} aria-hidden /> thinking…
@@ -216,7 +240,9 @@ export default function FollowUpInput() {
     logRef.current.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
   }, [collapsed, turns.length, turns[turns.length - 1]?.streamingText, turns[turns.length - 1]?.phase]);
 
-  const inFlight = turns.some((t) => t.phase === "awaiting" || t.phase === "streaming");
+  const inFlight = turns.some(
+    (t) => t.phase === "transcribing" || t.phase === "awaiting" || t.phase === "streaming",
+  );
 
   const updateTurn = (id: string, patch: Partial<Turn>) => {
     setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
@@ -232,12 +258,25 @@ export default function FollowUpInput() {
     if (collapsed) setCollapsed(false);
     appendTurn({
       id, question, isVoice: !!blob,
-      phase: "awaiting", streamingText: "",
+      // Voice submissions start in "transcribing" — the server will
+      // emit `event: transcribing` immediately, but we pre-seed the
+      // phase so the UI doesn't flicker "thinking" first.
+      phase: blob ? "transcribing" : "awaiting",
+      streamingText: "",
       answer: null, audioUrl: null, answerId: null, error: null,
     });
 
     try {
       const result = await submitFollowUp(question, blob, {
+        onTranscribing: () => {
+          updateTurn(id, { phase: "transcribing" });
+        },
+        onTranscribed: (text) => {
+          // Fill in the question with what the model heard + move on
+          // to waiting for the LLM. Empty text means STT found no
+          // speech — render the placeholder rather than blank.
+          updateTurn(id, { question: text, phase: "awaiting" });
+        },
         onToken: (delta) => {
           setTurns((prev) => prev.map((t) =>
             t.id === id

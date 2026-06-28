@@ -320,3 +320,13 @@
   font-family: var(--font-mono);
   color: var(--accent);
 }
+
+.questionPending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+  font-style: italic;
+  line-height: 1.55;
+}

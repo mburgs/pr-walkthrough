@@ -3,14 +3,18 @@
 The POST endpoint returns Server-Sent Events so the frontend can render
 the answer as it's generated. Event sequence:
 
-  event: open    data: {}                          connection alive
-  event: token   data: {"text": "...delta..."}     one per partial-JSON
-                                                   fragment of answer_text
-  event: final   data: {"answer": {...},           fires as soon as the
-                       "audio_url": "...",         LLM is done — audio
-                       "answer_id": "..."}         synth runs after this
-                                                   in a background task
-  event: error   data: {"message": "..."}          terminal failure
+  event: open          data: {}                       connection alive
+  event: transcribing  data: {}                       voice path only —
+                                                      STT in progress
+  event: question      data: {"text": "...",          voice path only —
+                              "confidence": 0.92}     transcribed input
+  event: token         data: {"text": "...delta..."}  one per partial-JSON
+                                                      fragment of answer_text
+  event: final         data: {"answer": {...},        fires as soon as the
+                              "audio_url": "...",     LLM is done — audio
+                              "answer_id": "..."}     synth runs after this
+                                                      in a background task
+  event: error         data: {"message": "..."}       terminal failure
 
 `final` is emitted *before* TTS finishes so the UI stops claiming
 "streaming" the moment text is done. The audio GET endpoint long-polls
@@ -58,18 +62,17 @@ async def post_follow_up(
 
     content_type = request.headers.get("content-type", "application/json")
 
+    # Read the full body up-front (must be done before the streaming
+    # response begins). For audio inputs we defer transcription itself
+    # into the SSE generator so the client can see a "transcribing"
+    # status + the recognised text before tokens start flowing.
+    follow_up: FollowUp | None = None
+    audio_bytes: bytes | None = None
     if content_type.startswith("application/json"):
         body = await request.json()
         follow_up = FollowUp.model_validate(body)
     else:
-        # Audio — transcribe via STT
         audio_bytes = await request.body()
-        text, confidence = await ctx.stt.transcribe(audio_bytes, content_type)
-        follow_up = FollowUp(
-            chunk_id=state.current_chunk_id,
-            question_text=text,
-            transcript_confidence=confidence,
-        )
 
     history = ctx.store.list_follow_up_history(sid)
 
@@ -90,9 +93,34 @@ async def post_follow_up(
                 log.exception("follow-up audio synth failed (audio will 504)")
 
     async def event_stream():
+        nonlocal follow_up
+
         # Heartbeat / opener — tells the client we're alive and avoids
         # buffered proxies holding the connection silent.
         yield "event: open\ndata: {}\n\n"
+
+        # Voice path: STT before LLM. Surface progress + the recognised
+        # text so the user can see what was heard (vital when STT
+        # mistakes the question — they'd otherwise see a non-sequitur
+        # answer with no idea why).
+        if follow_up is None:
+            assert audio_bytes is not None
+            yield "event: transcribing\ndata: {}\n\n"
+            try:
+                text, confidence = await ctx.stt.transcribe(audio_bytes, content_type)
+            except Exception as e:
+                log.exception("STT failed")
+                yield f"event: error\ndata: {json.dumps({'message': f'Transcription failed: {e}'})}\n\n"
+                return
+            yield (
+                "event: question\n"
+                f"data: {json.dumps({'text': text, 'confidence': confidence})}\n\n"
+            )
+            follow_up = FollowUp(
+                chunk_id=state.current_chunk_id,
+                question_text=text,
+                transcript_confidence=confidence,
+            )
 
         # Stream the LLM tokens. The semaphore gate matches process_chunk
         # so a busy multi-level chunk burst doesn't elbow this call out.

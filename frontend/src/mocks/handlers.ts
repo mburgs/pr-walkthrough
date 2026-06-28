@@ -139,11 +139,13 @@ export const handlers = [
   }),
 
   // POST /sessions/:sid/follow-up — text or audio follow-up.
-  // Mirrors the real backend's SSE response: one `open`, several
-  // `token` events that together spell out answer_text, then `final`.
-  http.post("/sessions/:sid/follow-up", async () => {
+  // Mirrors the real backend's SSE event sequence (open / transcribing
+  // / question / token… / final). Voice submissions are detected by
+  // content-type; text submissions skip the STT-related events.
+  http.post("/sessions/:sid/follow-up", async ({ request }) => {
     const answer = followUpExample.answer;
     const audioUrl = `/sessions/${SESSION_ID}/follow-up/ans_001/audio`;
+    const isVoice = !(request.headers.get("content-type") ?? "").startsWith("application/json");
     const encoder = new TextEncoder();
 
     const stream = new ReadableStream<Uint8Array>({
@@ -154,9 +156,11 @@ export const handlers = [
           );
         };
         enqueue("open", {});
-        // Emit answer_text in small chunks with a tiny delay so the UI
-        // can demonstrate streaming + the e2e tests can assert that
-        // tokens precede the final event.
+        if (isVoice) {
+          enqueue("transcribing", {});
+          await new Promise((r) => setTimeout(r, 50));
+          enqueue("question", { text: "What does this PR change?", confidence: 0.95 });
+        }
         const text = answer.answer_text;
         const stride = Math.max(1, Math.ceil(text.length / 8));
         for (let i = 0; i < text.length; i += stride) {
