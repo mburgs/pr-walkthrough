@@ -47,7 +47,12 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "base"
+# Default model. `base` (74M) is fast but routinely returns empty
+# transcripts on real-world recordings; `small` (244M) is the smallest
+# size that's reliable for English follow-up questions in this app.
+# ~500 MB one-time download on first use; ~0.5-1s per short clip on
+# CPU after that. Override with PR_WALKTHROUGH_WHISPER_MODEL.
+_DEFAULT_MODEL = "small"
 _ENV_MODEL_KEY = "PR_WALKTHROUGH_WHISPER_MODEL"
 # Voice-activity-detection filter. Defaults OFF — Whisper's bundled
 # Silero VAD is aggressive on quiet mics or short clips and is the most
