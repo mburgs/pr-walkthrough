@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from pathlib import Path
 
 from contracts.adapters import (
@@ -43,7 +44,6 @@ class AppContext:
     ) -> None:
         # Import fakes lazily so real adapters can be passed without importing fakes
         if llm is None:
-            import os
             if os.environ.get("ANTHROPIC_API_KEY"):
                 try:
                     from pr_walkthrough.llm.adapter import ClaudeLLMAdapter
@@ -71,14 +71,28 @@ class AppContext:
                 from pr_walkthrough.fakes import FakeTTS
                 tts = FakeTTS()
         if stt is None:
-            try:
-                from pr_walkthrough.stt.adapter import WhisperSTTAdapter
-                stt = WhisperSTTAdapter()
-            except Exception:
-                # faster-whisper not installable or model fetch failed — fall
-                # back to the dummy so the rest of the app still works.
-                from pr_walkthrough.fakes import FakeSTT
-                stt = FakeSTT()
+            # STT engine selection. Default whisper; flip to parakeet for
+            # better English accuracy on M-series Macs. Each engine's
+            # import + load is wrapped so a missing dependency degrades
+            # to FakeSTT instead of crashing the whole app.
+            engine = os.environ.get("PR_WALKTHROUGH_STT_ENGINE", "whisper").lower()
+            if engine == "parakeet":
+                try:
+                    from pr_walkthrough.stt.parakeet_adapter import ParakeetSTTAdapter
+                    stt = ParakeetSTTAdapter()
+                except Exception:
+                    log.exception("Parakeet STT unavailable — falling back to FakeSTT")
+                    from pr_walkthrough.fakes import FakeSTT
+                    stt = FakeSTT()
+            else:
+                try:
+                    from pr_walkthrough.stt.adapter import WhisperSTTAdapter
+                    stt = WhisperSTTAdapter()
+                except Exception:
+                    # faster-whisper not installable or model fetch failed — fall
+                    # back to the dummy so the rest of the app still works.
+                    from pr_walkthrough.fakes import FakeSTT
+                    stt = FakeSTT()
         if pr_source is None:
             try:
                 from pr_walkthrough.pr.gh_source import GhPRSource

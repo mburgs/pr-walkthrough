@@ -37,6 +37,13 @@ piper = [
     "piper-tts>=1.2.0",
 ]
 
+# Parakeet STT via MLX. Apple Silicon only; mlx is a macOS-only wheel.
+# Activate with `pip install -e backend[parakeet]` then run with
+# PR_WALKTHROUGH_STT_ENGINE=parakeet.
+parakeet = [
+    "parakeet-mlx>=0.5",
+]
+
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
