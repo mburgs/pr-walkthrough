@@ -1,20 +1,36 @@
 import { useState, useRef, useEffect } from "react";
-import type { FollowUpAnswer } from "../contracts";
+import type { Concern, FollowUpAnswer } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import styles from "./FollowUpInput.module.css";
 
 /**
- * Multi-turn follow-up chat.
+ * Multi-turn follow-up chat panel.
  *
- * Each Ask appends a `Turn` to the history and is never dropped — the
- * user can scroll back to see prior Q&A. The active turn streams in
- * token-by-token over the SSE backend, but the rendered text is driven
- * by a per-turn typewriter buffer that reveals at a steady ~80 cps so
- * the streaming is *visibly* progressive even when the network/LLM
- * dumps a chunk all at once.
+ * Layout:
+ *   ┌────────────────────────────────┐
+ *   │ ▾ Chat (N)        [Clear]      │  panel header — collapse handle
+ *   ├────────────────────────────────┤
+ *   │ › question                     │
+ *   │   Answer: streamed text…       │  ← scrollable, capped at 35vh
+ *   │ › another question             │
+ *   │   Answer: …                    │
+ *   ├────────────────────────────────┤
+ *   │ [input]  [Ask]  [🎙]           │  input row — always visible
+ *   └────────────────────────────────┘
  *
- * Per-turn collapsible answer; questions stay visible above their
- * answers as static labels.
+ * Each turn streams in token-by-token over SSE; a per-turn typewriter
+ * reveals the text at a steady ~90 cps so the streaming is visibly
+ * progressive even when the backend dumps a chunk at once. Pill
+ * indicators on the answer header:
+ *   `thinking…`  awaiting first token
+ *   `streaming`  tokens arriving from LLM
+ *   `typing`     LLM done, typewriter still revealing
+ * Once both conditions clear the pill disappears.
+ *
+ * Concerns surfaced inside an answer get a `+ Flag` button that pushes
+ * them into the session's flag tracker — same shape as the side-rail
+ * Concerns section, so the user can capture promising threads found
+ * mid-conversation without copy-pasting.
  */
 
 type Phase = "awaiting" | "streaming" | "complete" | "error";
@@ -29,10 +45,14 @@ interface Turn {
   audioUrl: string | null;
   answerId: string | null;
   error: string | null;
-  collapsed: boolean;
 }
 
 const REVEAL_CHARS_PER_SEC = 90;
+const PANEL_COLLAPSED_KEY = "pr-walkthrough.followupCollapsed";
+
+function loadBool(key: string): boolean {
+  try { return localStorage.getItem(key) === "1"; } catch { return false; }
+}
 
 /** Reveals `target` one char at a time at a fixed rate. When the target
  * shrinks (e.g. new turn) the displayed text resets. When the source
@@ -41,13 +61,10 @@ const REVEAL_CHARS_PER_SEC = 90;
 function useTypewriter(target: string, finalized: boolean): string {
   const [displayed, setDisplayed] = useState("");
 
-  // Reset displayed when target shrinks (a fresh turn starts at "").
   useEffect(() => {
     if (target.length < displayed.length) setDisplayed("");
   }, [target, displayed.length]);
 
-  // Tick: catch up one char at a time. If finalized + we're behind by a
-  // lot, flush to the end so the user isn't stuck watching a slow type.
   useEffect(() => {
     if (displayed.length >= target.length) return;
     if (finalized && target.length - displayed.length > 60) {
@@ -55,9 +72,6 @@ function useTypewriter(target: string, finalized: boolean): string {
       return;
     }
     const id = window.setTimeout(() => {
-      // Reveal a chunk proportional to how far behind we are, so a
-      // burst of network activity catches up faster than 1-char-at-a-
-      // time. Floor at 1 so progress always happens.
       const gap = target.length - displayed.length;
       const step = Math.max(1, Math.floor(gap / 8));
       setDisplayed(target.slice(0, displayed.length + step));
@@ -68,10 +82,41 @@ function useTypewriter(target: string, finalized: boolean): string {
   return displayed;
 }
 
-function TurnView({ turn, onToggle }: { turn: Turn; onToggle: () => void }) {
-  // The target the typewriter chases. Once complete, switch to the
-  // final answer's text (already equal to streamingText if streaming
-  // worked, but the structured answer is authoritative).
+function FlagFromConcernButton({ concern, chunkId }: { concern: Concern; chunkId: string | null }) {
+  const { addFlag } = useSession();
+  const [added, setAdded] = useState(false);
+  const [pending, setPending] = useState(false);
+
+  if (!chunkId) return null;  // no anchor chunk → no place to attach
+
+  const handleAdd = async () => {
+    setPending(true);
+    try {
+      await addFlag({
+        chunk_id: chunkId,
+        anchor: concern.anchor,
+        severity: concern.severity,
+        body: concern.suggested_question || concern.text,
+      });
+      setAdded(true);
+    } finally {
+      setPending(false);
+    }
+  };
+
+  if (added) return <span className={styles.flagged}>✓ flagged</span>;
+  return (
+    <button
+      className={styles.flagBtn}
+      onClick={handleAdd}
+      disabled={pending}
+      title="Add to flags"
+    >+ Flag</button>
+  );
+}
+
+function TurnView({ turn }: { turn: Turn }) {
+  const { currentChunkId } = useSession();
   const target =
     turn.phase === "complete" && turn.answer
       ? turn.answer.answer_text
@@ -89,15 +134,7 @@ function TurnView({ turn, onToggle }: { turn: Turn; onToggle: () => void }) {
         <span className={styles.questionText}>{turn.question || (turn.isVoice ? "(voice)" : "")}</span>
       </div>
       <div className={styles.answer}>
-        <button
-          className={styles.answerHeader}
-          onClick={onToggle}
-          disabled={isInFlight}
-          title={isInFlight ? undefined : (turn.collapsed ? "Expand answer" : "Collapse answer")}
-        >
-          <span className={styles.answerCaret} aria-hidden>
-            {turn.collapsed ? "▸" : "▾"}
-          </span>
+        <div className={styles.answerHeader}>
           <span className={styles.answerLabel}>Answer</span>
           {turn.phase === "awaiting" && (
             <span className={styles.answerStatus}>
@@ -114,36 +151,36 @@ function TurnView({ turn, onToggle }: { turn: Turn; onToggle: () => void }) {
               <span className={styles.pulseDot} aria-hidden /> typing
             </span>
           )}
-        </button>
-        {!turn.collapsed && (
-          <>
-            {turn.phase === "awaiting" && !displayed ? (
-              <div className={styles.answerTextPlaceholder}>
-                Waiting for the first token…
-              </div>
-            ) : (
-              <div className={styles.answerText}>
-                {displayed}
-                {(isInFlight || stillRevealing) && (
-                  <span className={styles.streamCaret} aria-hidden>▍</span>
-                )}
-              </div>
+        </div>
+        {turn.phase === "awaiting" && !displayed ? (
+          <div className={styles.answerTextPlaceholder}>
+            Waiting for the first token…
+          </div>
+        ) : (
+          <div className={styles.answerText}>
+            {displayed}
+            {(isInFlight || stillRevealing) && (
+              <span className={styles.streamCaret} aria-hidden>▍</span>
             )}
-            {turn.error && (
-              <div className={styles.answerError}>
-                Stream error: {turn.error}
+          </div>
+        )}
+        {turn.error && (
+          <div className={styles.answerError}>
+            Stream error: {turn.error}
+          </div>
+        )}
+        {turn.answer && turn.answer.new_concerns.length > 0 && (
+          <div className={styles.newConcerns}>
+            {turn.answer.new_concerns.map((c, i) => (
+              <div key={i} className={styles.newConcern}>
+                <div className={styles.newConcernRow}>
+                  <span className={styles.newConcernSev}>[{c.severity}]</span>
+                  <span className={styles.newConcernText}>{c.text}</span>
+                </div>
+                <FlagFromConcernButton concern={c} chunkId={currentChunkId} />
               </div>
-            )}
-            {turn.answer && turn.answer.new_concerns.length > 0 && (
-              <div className={styles.newConcerns}>
-                {turn.answer.new_concerns.map((c, i) => (
-                  <div key={i} className={styles.newConcern}>
-                    [{c.severity}] {c.text}
-                  </div>
-                ))}
-              </div>
-            )}
-          </>
+            ))}
+          </div>
         )}
       </div>
     </div>
@@ -154,50 +191,49 @@ export default function FollowUpInput() {
   const { session, submitFollowUp } = useSession();
   const [text, setText] = useState("");
   const [turns, setTurns] = useState<Turn[]>([]);
+  const [collapsed, setCollapsed] = useState<boolean>(() => loadBool(PANEL_COLLAPSED_KEY));
   const [recording, setRecording] = useState(false);
   const [micAvailable, setMicAvailable] = useState<boolean | null>(null);
   const recorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
   const logRef = useRef<HTMLDivElement | null>(null);
 
-  // Probe mic availability once
+  useEffect(() => {
+    localStorage.setItem(PANEL_COLLAPSED_KEY, collapsed ? "1" : "0");
+  }, [collapsed]);
+
   useEffect(() => {
     navigator.mediaDevices?.getUserMedia({ audio: true })
       .then((s) => { s.getTracks().forEach((t) => t.stop()); setMicAvailable(true); })
       .catch(() => setMicAvailable(false));
   }, []);
 
-  // Auto-scroll the log to the bottom whenever a new turn arrives or
-  // the active turn keeps streaming. Smooth scroll so the user can see
-  // direction-of-motion when many turns are stacked.
+  // Auto-scroll the log to the latest turn whenever its streamingText
+  // grows or its phase advances. Skipped when collapsed (log isn't
+  // rendered).
   useEffect(() => {
-    if (!logRef.current) return;
+    if (collapsed || !logRef.current) return;
     logRef.current.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
-  }, [turns.length, turns[turns.length - 1]?.streamingText, turns[turns.length - 1]?.phase]);
+  }, [collapsed, turns.length, turns[turns.length - 1]?.streamingText, turns[turns.length - 1]?.phase]);
 
   const inFlight = turns.some((t) => t.phase === "awaiting" || t.phase === "streaming");
 
   const updateTurn = (id: string, patch: Partial<Turn>) => {
     setTurns((prev) => prev.map((t) => (t.id === id ? { ...t, ...patch } : t)));
   };
-
   const appendTurn = (turn: Turn) => setTurns((prev) => [...prev, turn]);
 
   const runStream = async (question: string, blob: Blob | undefined) => {
     const id = (typeof crypto !== "undefined" && "randomUUID" in crypto)
       ? crypto.randomUUID()
       : `t_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    // Asking a question auto-expands the panel so the user sees the
+    // streaming response. They can collapse again afterward.
+    if (collapsed) setCollapsed(false);
     appendTurn({
-      id,
-      question,
-      isVoice: !!blob,
-      phase: "awaiting",
-      streamingText: "",
-      answer: null,
-      audioUrl: null,
-      answerId: null,
-      error: null,
-      collapsed: false,
+      id, question, isVoice: !!blob,
+      phase: "awaiting", streamingText: "",
+      answer: null, audioUrl: null, answerId: null, error: null,
     });
 
     try {
@@ -249,7 +285,6 @@ export default function FollowUpInput() {
       recorder.onstop = async () => {
         stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
-        // Question text is filled in once STT returns; until then show a placeholder
         await runStream("", blob);
       };
       recorder.start();
@@ -268,16 +303,26 @@ export default function FollowUpInput() {
   return (
     <div className={styles.bar}>
       {turns.length > 0 && (
+        <div className={styles.panelHeader}>
+          <button
+            className={styles.panelToggle}
+            onClick={() => setCollapsed((v) => !v)}
+            title={collapsed ? "Show chat" : "Hide chat"}
+          >
+            <span className={styles.panelCaret} aria-hidden>{collapsed ? "▸" : "▾"}</span>
+            Chat ({turns.length})
+          </button>
+          <button
+            className={styles.clearBtn}
+            onClick={clearHistory}
+            disabled={inFlight}
+            title="Clear conversation"
+          >Clear</button>
+        </div>
+      )}
+      {turns.length > 0 && !collapsed && (
         <div className={styles.log} ref={logRef}>
-          {turns.map((t) => (
-            <TurnView
-              key={t.id}
-              turn={t}
-              onToggle={() =>
-                updateTurn(t.id, { collapsed: !t.collapsed })
-              }
-            />
-          ))}
+          {turns.map((t) => <TurnView key={t.id} turn={t} />)}
         </div>
       )}
       <div className={styles.row}>
@@ -310,14 +355,6 @@ export default function FollowUpInput() {
           >
             {recording ? "⏹" : "🎙"}
           </button>
-        )}
-        {turns.length > 0 && (
-          <button
-            className={styles.clearBtn}
-            onClick={clearHistory}
-            disabled={inFlight}
-            title="Clear conversation"
-          >Clear</button>
         )}
       </div>
     </div>

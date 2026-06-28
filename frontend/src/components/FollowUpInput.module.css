@@ -240,3 +240,83 @@
   border-color: var(--text-muted);
 }
 .clearBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ---------- Panel-level collapse header ---------- */
+
+.panelHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 4px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  margin-bottom: 8px;
+}
+.panelToggle {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 4px;
+  cursor: pointer;
+  border-radius: var(--radius-sm);
+  transition: color 120ms, background 120ms;
+}
+.panelToggle:hover { color: var(--text); background: var(--surface-2); }
+.panelCaret {
+  font-size: 10px;
+  color: var(--text-muted);
+  width: 10px;
+  text-align: center;
+}
+.panelHeader .clearBtn { margin-left: auto; }
+
+/* ---------- +Flag button on chat-found concerns ---------- */
+
+.newConcernRow {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+.newConcernSev {
+  flex-shrink: 0;
+  color: var(--warn);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+.newConcernText { flex: 1; }
+
+.flagBtn {
+  margin-top: 4px;
+  background: transparent;
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-size: 10px;
+  font-family: var(--font-mono);
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.flagBtn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-muted);
+}
+.flagBtn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.flagged {
+  display: inline-block;
+  margin-top: 4px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--accent);
+}
