@@ -27,7 +27,7 @@ def _fake_tts_registry() -> TTSRegistry:
 def in_memory_ctx() -> AppContext:
     """AppContext with fakes for all adapters + in-memory SQLite (isolated per test).
 
-    Production wiring uses real Claude / Whisper / Kokoro / gh; tests use the
+    Production wiring uses real Claude / Parakeet / Kokoro / gh; tests use the
     fakes explicitly so the suite stays fast and offline.
     """
     ctx = AppContext(

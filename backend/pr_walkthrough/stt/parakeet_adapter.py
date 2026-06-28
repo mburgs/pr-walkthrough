@@ -1,28 +1,16 @@
-"""ParakeetSTTAdapter — STT via NVIDIA Parakeet running on Apple Silicon (MLX).
+"""ParakeetSTTAdapter — STT via NVIDIA Parakeet on Apple Silicon (MLX).
 
-Parakeet is engineered for low-latency English ASR and on M-series Macs
-the MLX port is meaningfully faster than Whisper-medium with better
-accuracy on natural speech (the motivating use case here: short
-follow-up questions where Whisper-base/small/medium kept whiffing).
-
-Trade-offs vs. WhisperSTTAdapter:
-  + English-only — matches this app's needs, simpler defaults
-  + Fast on M-series via MLX (no GPU needed)
-  + More reliable on short clips that Whisper auto-detect garbles
-  - Heavier deps: parakeet-mlx + mlx (~bf16 model ~600 MB download)
-  - Path-based API only — we round-trip bytes through a temp file
-
-Selection
----------
-Picked by AppContext when ``PR_WALKTHROUGH_STT_ENGINE=parakeet``.
-Falls back gracefully to FakeSTT if ``parakeet_mlx`` isn't importable
-(e.g. running on Linux without MLX).
+This is the only STT engine. AppContext imports it unconditionally;
+startup hard-fails if ``parakeet_mlx`` can't load (Apple Silicon
+required — mlx is macOS-only).
 
 Env knobs
 ---------
 ``PR_WALKTHROUGH_PARAKEET_MODEL``   HF id, default
                                     ``mlx-community/parakeet-tdt-0.6b-v2``
-``PR_WALKTHROUGH_STT_DUMP_DIR``     shared with Whisper adapter
+``PR_WALKTHROUGH_STT_DUMP_DIR``     if set, raw browser audio bytes
+                                    are written to this directory for
+                                    playback / inspection on every call.
 """
 
 from __future__ import annotations
@@ -60,23 +48,10 @@ def _mime_extension(mime: str) -> str:
 
 
 class ParakeetSTTAdapter:
-    """Satisfies the STTAdapter protocol with parakeet-mlx.
+    """Satisfies the STTAdapter protocol with parakeet-mlx."""
 
-    Parameters mirror the Whisper adapter for parity: ``model_name``
-    is the only knob that materially matters; device/compute_type are
-    accepted for interface compatibility but ignored (MLX picks the
-    Metal device automatically).
-    """
-
-    def __init__(
-        self,
-        model_name: str | None = None,
-        device: str = "mlx",         # accepted for protocol parity, ignored
-        compute_type: str = "bf16",  # likewise; the dtype is fixed by model
-    ) -> None:
+    def __init__(self, model_name: str | None = None) -> None:
         self._model_name = model_name or _get_model_name()
-        self._device = device
-        self._compute_type = compute_type
         self._model: BaseParakeet | None = None
         # MLX binds Metal streams per-thread, so model load + every
         # transcribe call MUST run on the same OS thread — otherwise
@@ -118,13 +93,12 @@ class ParakeetSTTAdapter:
         return max(0.0, min(1.0, sum(confs) / len(confs)))
 
     def _transcribe_sync(self, audio_bytes: bytes, mime: str) -> tuple[str, float]:
-        """Blocking transcription — runs via asyncio.to_thread.
+        """Blocking transcription — runs on the adapter's dedicated
+        MLX-pinned executor (see __init__).
 
         Writes the bytes to a temp file because parakeet-mlx's API
-        takes a path (it shells out to ffmpeg for decoding, which
-        handles webm/opus natively). Logs the same shape of
-        diagnostics as the Whisper adapter so empty-result debugging
-        is consistent across engines.
+        takes a path; it shells out to ffmpeg internally for decoding,
+        which handles webm/opus natively.
         """
         t_total = time.perf_counter()
 
@@ -176,8 +150,9 @@ class ParakeetSTTAdapter:
         )
         if not text:
             log.warning(
-                "Parakeet returned empty text. Try a longer/clearer recording, "
-                "or fall back to Whisper via PR_WALKTHROUGH_STT_ENGINE=whisper."
+                "Parakeet returned empty text. Speak longer/clearer, "
+                "check mic input device, or set PR_WALKTHROUGH_STT_DUMP_DIR "
+                "to inspect what the backend actually received."
             )
         return text, confidence
 
