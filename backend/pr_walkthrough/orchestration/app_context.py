@@ -71,47 +71,20 @@ class AppContext:
                 from pr_walkthrough.fakes import FakeTTS
                 tts = FakeTTS()
         if stt is None:
-            # STT engine selection.
-            #   PR_WALKTHROUGH_STT_ENGINE = parakeet | whisper | auto (default)
-            # `auto` picks Parakeet when parakeet-mlx is importable
-            # (Apple Silicon, where it's faster + more accurate on
-            # natural English speech), else falls back to Whisper.
-            # Each engine's import is wrapped so a missing dependency
-            # degrades to FakeSTT instead of crashing the app.
-            engine = os.environ.get("PR_WALKTHROUGH_STT_ENGINE", "auto").lower()
-            if engine == "auto":
-                try:
-                    import parakeet_mlx  # noqa: F401
-                    engine = "parakeet"
-                except ImportError:
-                    engine = "whisper"
-            if engine == "parakeet":
-                try:
-                    from pr_walkthrough.stt.parakeet_adapter import ParakeetSTTAdapter
-                    stt = ParakeetSTTAdapter()
-                except Exception:
-                    log.exception("Parakeet STT unavailable — falling back to FakeSTT")
-                    from pr_walkthrough.fakes import FakeSTT
-                    stt = FakeSTT()
-            else:
-                try:
-                    from pr_walkthrough.stt.adapter import WhisperSTTAdapter
-                    stt = WhisperSTTAdapter()
-                except Exception:
-                    # faster-whisper not installable or model fetch failed — fall
-                    # back to the dummy so the rest of the app still works.
-                    from pr_walkthrough.fakes import FakeSTT
-                    stt = FakeSTT()
-            # Eagerly warm the model so the download + load happens at
-            # startup, not on the user's first mic recording (would be a
-            # 5-30s surprise wait). Adapters implement warmup() to do
-            # this; FakeSTT/other shim adapters just won't have it.
-            warmup = getattr(stt, "warmup", None)
-            if callable(warmup):
-                try:
-                    warmup()
-                except Exception:
-                    log.exception("STT warmup failed; first call will pay the load cost")
+            # Parakeet (MLX) is the only supported STT engine. Hard
+            # fail on import / load failure rather than silently
+            # subbing in a worse adapter — Whisper was tried first and
+            # was unusable on real speech, and a silent FakeSTT
+            # ("dummy transcription") makes voice features look broken
+            # without any signal in the logs.
+            #
+            # Tests inject FakeSTT directly via the `stt=` ctor arg,
+            # so they never hit this path.
+            from pr_walkthrough.stt.parakeet_adapter import ParakeetSTTAdapter
+            stt = ParakeetSTTAdapter()
+            # Warmup eagerly so the model downloads / loads at startup
+            # rather than blocking the user's first mic recording.
+            stt.warmup()
         if pr_source is None:
             try:
                 from pr_walkthrough.pr.gh_source import GhPRSource

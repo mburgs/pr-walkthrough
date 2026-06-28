@@ -7,7 +7,7 @@ Submodules:
 - fakes/         — fixture-backed Protocol implementations for dev  (stream 2)
 - llm/           — Claude LLMAdapter  (stream 3)
 - tts/           — Kokoro/Piper/say TTSAdapter  (stream 4)
-- stt/           — faster-whisper STTAdapter  (stream 5)
+- stt/           — Parakeet (MLX) STTAdapter  (stream 5)
 - pr/            — gh-CLI PRSource  (stream 6)
 - context/       — ripgrep ContextRetriever  (stream 7)
 """

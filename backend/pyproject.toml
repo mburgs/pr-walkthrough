@@ -17,9 +17,11 @@ dependencies = [
     # Stream 3 — Claude LLM
     "anthropic>=0.52.0",
 
-    # Stream 5 — local STT (faster-whisper)
-    "faster-whisper>=1.0.3",
-    "pydub>=0.25.1",
+    # Local STT (Parakeet via MLX). Apple Silicon required — mlx
+    # ships macOS-only wheels. There is intentionally no fallback
+    # engine; AppContext hard-fails if this can't load so a broken
+    # mic flow is visible at startup, not silently degraded.
+    "parakeet-mlx>=0.5",
     "numpy>=1.26",
 ]
 
@@ -35,13 +37,6 @@ kokoro = [
 ]
 piper = [
     "piper-tts>=1.2.0",
-]
-
-# Parakeet STT via MLX. Apple Silicon only; mlx is a macOS-only wheel.
-# Activate with `pip install -e backend[parakeet]` then run with
-# PR_WALKTHROUGH_STT_ENGINE=parakeet.
-parakeet = [
-    "parakeet-mlx>=0.5",
 ]
 
 dev = [

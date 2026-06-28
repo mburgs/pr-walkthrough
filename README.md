@@ -18,7 +18,7 @@ Working end-to-end. The PR demo flow (URL → plan → narrated tour with audio 
 | LLM | Claude (Sonnet) via `anthropic` SDK — planning + structured narration |
 | Cross-repo context | Jedi (Python static analysis) + ripgrep fallback |
 | TTS | Kokoro 82M (local, Apache-2.0) — also Piper and macOS `say` |
-| STT | `faster-whisper` (push-to-talk follow-ups) |
+| STT | Parakeet via MLX (push-to-talk follow-ups; Apple Silicon) |
 | PR I/O | `gh` CLI (uses your existing auth) |
 
 ## Quickstart
@@ -102,7 +102,7 @@ To deep-link past the form: `http://localhost:5173/?pr=https://github.com/owner/
 │  └─────────────┘ └───────────────┘ └──────────────────┘   │
 │  ┌─────────────┐ ┌───────────────┐ ┌──────────────────┐   │
 │  │ ContextRet  │ │ TTS adapter   │ │ STT adapter      │   │
-│  │ (Jedi + rg) │ │ (Kokoro/say)  │ │ (faster-whisper) │   │
+│  │ (Jedi + rg) │ │ (Kokoro/say)  │ │ (Parakeet · MLX) │   │
 │  └─────────────┘ └───────────────┘ └──────────────────┘   │
 │  ┌─────────────────────────────────────────────────────┐  │
 │  │ SessionStore (SQLite with FK cascades)              │  │
@@ -154,7 +154,7 @@ pr-walkthrough/
 │       ├── orchestration/  # AppContext, chunk_worker (narrate + synth pipeline)
 │       ├── pr/             # gh CLI source, unified diff parser
 │       ├── store/          # SQLite session store
-│       ├── stt/            # faster-whisper adapter
+│       ├── stt/            # Parakeet (MLX) adapter
 │       ├── tts/            # Kokoro / Piper / say adapters
 │       └── main.py         # FastAPI app entry
 ├── contracts/              # shared schemas + adapter Protocols (Pydantic)

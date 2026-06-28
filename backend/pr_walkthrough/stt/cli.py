@@ -53,9 +53,9 @@ def _ext_to_mime(path: str) -> str:
 
 
 async def _run(audio_bytes: bytes, mime: str) -> None:
-    from pr_walkthrough.stt.adapter import WhisperSTTAdapter
+    from pr_walkthrough.stt.parakeet_adapter import ParakeetSTTAdapter
 
-    adapter = WhisperSTTAdapter()
+    adapter = ParakeetSTTAdapter()
     text, confidence = await adapter.transcribe(audio_bytes, mime)
     # Output: "<text>"\t<confidence>
     print(f'"{text}"\t{confidence:.4f}')
@@ -64,7 +64,7 @@ async def _run(audio_bytes: bytes, mime: str) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         prog="python -m pr_walkthrough.stt.cli",
-        description="Transcribe an audio file locally using faster-whisper.",
+        description="Transcribe an audio file locally using Parakeet (MLX).",
     )
     parser.add_argument(
         "audio",
