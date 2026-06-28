@@ -71,11 +71,20 @@ class AppContext:
                 from pr_walkthrough.fakes import FakeTTS
                 tts = FakeTTS()
         if stt is None:
-            # STT engine selection. Default whisper; flip to parakeet for
-            # better English accuracy on M-series Macs. Each engine's
-            # import + load is wrapped so a missing dependency degrades
-            # to FakeSTT instead of crashing the whole app.
-            engine = os.environ.get("PR_WALKTHROUGH_STT_ENGINE", "whisper").lower()
+            # STT engine selection.
+            #   PR_WALKTHROUGH_STT_ENGINE = parakeet | whisper | auto (default)
+            # `auto` picks Parakeet when parakeet-mlx is importable
+            # (Apple Silicon, where it's faster + more accurate on
+            # natural English speech), else falls back to Whisper.
+            # Each engine's import is wrapped so a missing dependency
+            # degrades to FakeSTT instead of crashing the app.
+            engine = os.environ.get("PR_WALKTHROUGH_STT_ENGINE", "auto").lower()
+            if engine == "auto":
+                try:
+                    import parakeet_mlx  # noqa: F401
+                    engine = "parakeet"
+                except ImportError:
+                    engine = "whisper"
             if engine == "parakeet":
                 try:
                     from pr_walkthrough.stt.parakeet_adapter import ParakeetSTTAdapter
