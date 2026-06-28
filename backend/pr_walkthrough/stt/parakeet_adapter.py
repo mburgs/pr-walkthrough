@@ -86,6 +86,15 @@ class ParakeetSTTAdapter:
             log.info("Parakeet: model ready")
         return self._model
 
+    def warmup(self) -> None:
+        """Force model load now (download + weight materialise).
+
+        AppContext calls this at startup so the first voice request
+        doesn't pay the multi-second model load latency. No-op once
+        the model is cached in memory.
+        """
+        self._load_model()
+
     @staticmethod
     def _aggregate_confidence(result) -> float:
         """Mean per-sentence confidence; 0.0 when there are no sentences."""

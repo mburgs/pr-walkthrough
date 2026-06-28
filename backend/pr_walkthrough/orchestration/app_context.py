@@ -93,6 +93,16 @@ class AppContext:
                     # back to the dummy so the rest of the app still works.
                     from pr_walkthrough.fakes import FakeSTT
                     stt = FakeSTT()
+            # Eagerly warm the model so the download + load happens at
+            # startup, not on the user's first mic recording (would be a
+            # 5-30s surprise wait). Adapters implement warmup() to do
+            # this; FakeSTT/other shim adapters just won't have it.
+            warmup = getattr(stt, "warmup", None)
+            if callable(warmup):
+                try:
+                    warmup()
+                except Exception:
+                    log.exception("STT warmup failed; first call will pay the load cost")
         if pr_source is None:
             try:
                 from pr_walkthrough.pr.gh_source import GhPRSource

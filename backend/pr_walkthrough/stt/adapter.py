@@ -118,12 +118,22 @@ class WhisperSTTAdapter:
         if self._model is None:
             from faster_whisper import WhisperModel  # noqa: PLC0415
 
+            log.info("Whisper: loading %s (first run downloads weights)…", self._model_name)
             self._model = WhisperModel(
                 self._model_name,
                 device=self._device,
                 compute_type=self._compute_type,
             )
+            log.info("Whisper: model ready")
         return self._model
+
+    def warmup(self) -> None:
+        """Force model load now (download + weight materialise).
+
+        AppContext calls this at startup so the first voice request
+        doesn't pay the model-load latency. No-op once loaded.
+        """
+        self._load_model()
 
     @staticmethod
     def _aggregate_confidence(segments: list) -> float:
