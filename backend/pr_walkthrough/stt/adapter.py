@@ -30,21 +30,42 @@ Models cache in ``~/.cache/huggingface/hub`` on first run.
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
+import time
+import uuid
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+import numpy as np
 
 from pr_walkthrough.stt.audio import decode_to_float32
 
 if TYPE_CHECKING:
     from faster_whisper import WhisperModel
 
+log = logging.getLogger(__name__)
+
 _DEFAULT_MODEL = "base"
 _ENV_MODEL_KEY = "PR_WALKTHROUGH_WHISPER_MODEL"
+# Voice-activity-detection filter. Defaults OFF — Whisper's bundled
+# Silero VAD is aggressive on quiet mics or short clips and is the most
+# common cause of "STT returned nothing" on a real, audible recording.
+# Set PR_WALKTHROUGH_WHISPER_VAD=1 to re-enable.
+_ENV_VAD_KEY = "PR_WALKTHROUGH_WHISPER_VAD"
+# If set, dump the raw audio bytes received by transcribe() into this
+# directory (one file per call, named with a uuid + the mime extension).
+# Useful for "did the browser actually send audio?" debugging.
+_ENV_DUMP_KEY = "PR_WALKTHROUGH_STT_DUMP_DIR"
 
 
 def _get_model_name() -> str:
     return os.environ.get(_ENV_MODEL_KEY, _DEFAULT_MODEL)
+
+
+def _vad_enabled() -> bool:
+    return os.environ.get(_ENV_VAD_KEY, "0").strip() not in ("", "0", "false", "no")
 
 
 class WhisperSTTAdapter:
@@ -118,21 +139,94 @@ class WhisperSTTAdapter:
         return max(0.0, min(1.0, final_conf))
 
     def _transcribe_sync(self, audio_bytes: bytes, mime: str) -> tuple[str, float]:
-        """Blocking transcription — runs in a thread via asyncio.to_thread."""
-        model = self._load_model()
-        audio_array = decode_to_float32(audio_bytes, mime)
+        """Blocking transcription — runs in a thread via asyncio.to_thread.
 
-        segments_gen, _info = model.transcribe(
+        Emits diagnostic logs at INFO level so an empty-result run can
+        be debugged without rerunning the test: byte count, decoded
+        duration, audio RMS (silence vs. speech proxy), VAD setting,
+        info.language + duration_after_vad, segment count, raw text.
+        """
+        t_total = time.perf_counter()
+
+        # 1. Audio dump (opt-in) — saves the raw browser bytes so the
+        #    user can play them back and confirm the mic captured what
+        #    they thought it captured.
+        dump_dir = os.environ.get(_ENV_DUMP_KEY)
+        if dump_dir:
+            try:
+                d = Path(dump_dir)
+                d.mkdir(parents=True, exist_ok=True)
+                ext = mime.split("/")[-1].split(";")[0] or "bin"
+                path = d / f"stt_{uuid.uuid4().hex[:8]}.{ext}"
+                path.write_bytes(audio_bytes)
+                log.info("STT: dumped %d bytes to %s", len(audio_bytes), path)
+            except Exception:
+                log.warning("STT: dump failed", exc_info=True)
+
+        # 2. Decode + measure
+        t0 = time.perf_counter()
+        audio_array = decode_to_float32(audio_bytes, mime)
+        decode_ms = (time.perf_counter() - t0) * 1000
+
+        duration_s = len(audio_array) / 16_000  # we resample to 16 kHz
+        rms = float(np.sqrt(np.mean(audio_array ** 2))) if len(audio_array) else 0.0
+        peak = float(np.max(np.abs(audio_array))) if len(audio_array) else 0.0
+
+        vad_on = _vad_enabled()
+        log.info(
+            "STT in: bytes=%d mime=%s decoded=%.2fs (decode=%.0fms) "
+            "rms=%.4f peak=%.3f vad=%s model=%s",
+            len(audio_bytes), mime, duration_s, decode_ms,
+            rms, peak, vad_on, self._model_name,
+        )
+
+        # Cheap silence sentinel — RMS below this is essentially zero
+        # signal. Warn so the user notices when the mic captured
+        # nothing audible vs. when STT silently dropped real audio.
+        if duration_s > 0 and rms < 0.001:
+            log.warning(
+                "STT in: audio appears silent (rms=%.5f). "
+                "Mic gain too low, wrong input device, or empty recording?",
+                rms,
+            )
+
+        # 3. Transcribe + measure
+        model = self._load_model()
+        t1 = time.perf_counter()
+        segments_gen, info = model.transcribe(
             audio_array,
             language=None,  # auto-detect
             beam_size=5,
-            vad_filter=True,  # skip silence at start/end
+            vad_filter=vad_on,
         )
-        # Materialise the generator so we can iterate twice
         segments = list(segments_gen)
+        transcribe_ms = (time.perf_counter() - t1) * 1000
 
         text = " ".join(seg.text.strip() for seg in segments).strip()
         confidence = self._aggregate_confidence(segments)
+
+        # 4. Result log — covers the common failure modes:
+        #    - segments=0  → VAD ate everything OR audio was silence
+        #    - segments>0, text=""  → very rare; usually whitespace-only
+        #    - language='nn' with low prob  → mis-detected language
+        log.info(
+            "STT out: text=%r conf=%.3f segments=%d "
+            "lang=%s/%s%% transcribe=%.0fms total=%.0fms duration_after_vad=%.2fs",
+            text, confidence, len(segments),
+            getattr(info, "language", "?"),
+            int(getattr(info, "language_probability", 0.0) * 100),
+            transcribe_ms,
+            (time.perf_counter() - t_total) * 1000,
+            getattr(info, "duration_after_vad", 0.0),
+        )
+        if not text:
+            log.warning(
+                "STT returned empty text. Try: "
+                "PR_WALKTHROUGH_WHISPER_VAD=0 (disable VAD, default), "
+                "PR_WALKTHROUGH_WHISPER_MODEL=small (better accuracy), "
+                "PR_WALKTHROUGH_STT_DUMP_DIR=/tmp/stt (inspect input audio)."
+            )
+
         return text, confidence
 
     # ------------------------------------------------------------------
