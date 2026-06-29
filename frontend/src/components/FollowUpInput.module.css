@@ -366,3 +366,105 @@
   color: var(--text-muted);
   word-break: break-all;
 }
+
+/* ---------- Markdown rendering inside answer text ---------- */
+
+/* react-markdown wraps each top-level block in its own element; we
+   scope to .answerText to keep the styling local to chat answers and
+   not leak into other markdown surfaces. */
+
+.answerText :global(p) {
+  margin: 0 0 8px;
+  line-height: 1.55;
+}
+.answerText :global(p:last-child) { margin-bottom: 0; }
+
+.answerText :global(ul),
+.answerText :global(ol) {
+  margin: 0 0 8px;
+  padding-left: 22px;
+}
+.answerText :global(li) {
+  margin: 2px 0;
+  line-height: 1.5;
+}
+
+.answerText :global(code) {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+  background: var(--bg-tinted);
+  padding: 1px 5px;
+  border-radius: 3px;
+  color: var(--accent);
+  word-break: break-word;
+}
+
+.answerText :global(pre) {
+  margin: 8px 0;
+  padding: 10px 12px;
+  background: var(--bg-tinted);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.answerText :global(pre code) {
+  background: transparent;
+  padding: 0;
+  color: var(--text);
+  font-size: inherit;
+  display: block;
+}
+
+.answerText :global(h1),
+.answerText :global(h2),
+.answerText :global(h3),
+.answerText :global(h4) {
+  margin: 12px 0 6px;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  line-height: 1.3;
+}
+.answerText :global(h1) { font-size: 16px; }
+.answerText :global(h2) { font-size: 15px; }
+
+.answerText :global(a) {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.answerText :global(a:hover) { color: var(--text); }
+
+.answerText :global(blockquote) {
+  margin: 8px 0;
+  padding: 4px 12px;
+  border-left: 3px solid var(--border);
+  color: var(--text-muted);
+}
+
+.answerText :global(table) {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 8px 0;
+  font-size: 12px;
+}
+.answerText :global(th),
+.answerText :global(td) {
+  border: 1px solid var(--border-soft);
+  padding: 4px 8px;
+  text-align: left;
+}
+.answerText :global(th) {
+  background: var(--bg-tinted);
+  font-weight: 600;
+}
+
+.answerText :global(strong) { font-weight: 600; color: var(--text); }
+.answerText :global(em) { font-style: italic; }
+.answerText :global(hr) {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 12px 0;
+}

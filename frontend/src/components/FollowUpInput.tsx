@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type { Concern, FollowUpAnswer } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import styles from "./FollowUpInput.module.css";
@@ -202,7 +204,15 @@ function TurnView({ turn }: { turn: Turn }) {
           </div>
         ) : (
           <div className={styles.answerText}>
-            {displayed}
+            {/* ReactMarkdown handles partial markdown gracefully during
+                streaming (an unclosed ``` just renders as best-effort
+                plain text until the closing fence arrives). remark-gfm
+                gives us tables / strikethrough / autolinks. The caret
+                lives outside the markdown so it doesn't break block
+                rendering. */}
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              {displayed}
+            </ReactMarkdown>
             {(isInFlight || stillRevealing) && (
               <span className={styles.streamCaret} aria-hidden>▍</span>
             )}
