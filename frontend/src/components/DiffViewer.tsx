@@ -166,7 +166,7 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
                       ? hunk.newStart - (prev.newStart + prev.newLines)
                       : 0;
                     const label = prev
-                      ? `… ${skipped} line${skipped === 1 ? "" : "s"} hidden (jump to ${hunk.newStart}) …`
+                      ? `${skipped} line${skipped === 1 ? "" : "s"} hidden`
                       : `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
                     return [
                       <Decoration key={`dec-${hunk.content}`}>

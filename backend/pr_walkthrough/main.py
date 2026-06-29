@@ -33,8 +33,25 @@ logging.basicConfig(
 # Tame chatty third-party loggers that drown the actual app signal.
 # `phonemizer` (a Kokoro dep) warns on every grapheme→phoneme call when
 # the espeak-ng word count disagrees with the input — harmless, just
-# spammy. `httpx` logs every HF download HEAD which we don't need at
-# INFO for a long-running dev server.
+# spammy.
+#
+# Setting the logger's level alone is NOT enough: phonemizer
+# re-asserts its level the first time it synthesises, undoing our
+# setLevel(ERROR). We attach a logging.Filter to the root handler
+# that drops the specific "words count mismatch" warnings regardless
+# of which child logger emits them. The handler-level filter survives
+# any subsequent reconfig of the phonemizer logger.
+class _PhonemizerWordsMismatchFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:  # noqa: D401
+        if record.name.startswith("phonemizer") and "words count mismatch" in record.getMessage():
+            return False
+        return True
+
+
+for _h in logging.getLogger().handlers:
+    _h.addFilter(_PhonemizerWordsMismatchFilter())
+# Belt-and-braces: still raise the threshold so anything else from
+# phonemizer at WARN or below is suppressed too.
 for _noisy in ("phonemizer", "phonemizer.backend.espeak.words_mismatch"):
     logging.getLogger(_noisy).setLevel(logging.ERROR)
 

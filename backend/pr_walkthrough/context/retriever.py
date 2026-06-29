@@ -16,10 +16,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import sys
 from pathlib import Path
 from typing import Final
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Public re-export so callers do:
@@ -204,6 +207,30 @@ def _build_snippet(
 # ---------------------------------------------------------------------------
 # Ripgrep runner
 # ---------------------------------------------------------------------------
+
+
+import shutil as _shutil
+
+
+def ensure_ripgrep_installed() -> str:
+    """Locate ripgrep on PATH or raise RipgrepNotFoundError with install help.
+
+    Called at AppContext construction so the backend fails fast with a
+    single readable error instead of crashing chunk-by-chunk with deep
+    asyncio tracebacks. Returns the absolute path to the `rg` binary
+    (callers can cache it; we re-resolve in _run_rg to stay robust if
+    the binary moves between calls).
+    """
+    found = _shutil.which("rg")
+    if found is None:
+        raise RipgrepNotFoundError(
+            "ripgrep ('rg') is required for related-code retrieval but is "
+            "not on PATH.\n\n"
+            "  • macOS:  brew install ripgrep\n"
+            "  • Debian/Ubuntu:  sudo apt-get install ripgrep\n"
+            "  • Other:  https://github.com/BurntSushi/ripgrep#installation\n"
+        )
+    return found
 
 
 async def _run_rg(symbol: str, repo_root: Path) -> list[dict]:

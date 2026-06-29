@@ -93,11 +93,24 @@ class AppContext:
                 from pr_walkthrough.fakes import FakePRSource
                 pr_source = FakePRSource()
         if context_retriever is None:
+            # Fail fast if ripgrep isn't installed — the retriever needs
+            # it for non-Python file lookups and per-chunk failures
+            # produced 20-line tracebacks that drowned the actual logs.
+            # Catch only the specific RipgrepNotFoundError and re-raise
+            # it cleanly; any other unrelated import failure still falls
+            # back to FakeContext so tests / dev environments without
+            # jedi still work.
+            from pr_walkthrough.context.retriever import (
+                RipgrepNotFoundError, ensure_ripgrep_installed,
+            )
+            ensure_ripgrep_installed()  # raises RipgrepNotFoundError if missing
             try:
                 from pr_walkthrough.context.jedi_retriever import (
                     HybridContextRetriever,
                 )
                 context_retriever = HybridContextRetriever()
+            except RipgrepNotFoundError:
+                raise
             except Exception:
                 from pr_walkthrough.fakes import FakeContext
                 context_retriever = FakeContext()
