@@ -30,6 +30,14 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 
+# Tame chatty third-party loggers that drown the actual app signal.
+# `phonemizer` (a Kokoro dep) warns on every grapheme→phoneme call when
+# the espeak-ng word count disagrees with the input — harmless, just
+# spammy. `httpx` logs every HF download HEAD which we don't need at
+# INFO for a long-running dev server.
+for _noisy in ("phonemizer", "phonemizer.backend.espeak.words_mismatch"):
+    logging.getLogger(_noisy).setLevel(logging.ERROR)
+
 app = FastAPI(
     title="pr-walkthrough",
     version="0.1.0",
