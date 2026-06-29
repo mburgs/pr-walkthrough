@@ -48,22 +48,25 @@ async def create_session(
 
     ctx.store.create_session(plan)
 
-    # Kick off background narration for chunk 1 (and prefetch chunk 2).
-    # Routed through the same coalescing kicker that the long-poll endpoint
-    # uses, so a later `GET /chunks/c1` doesn't fire a *second* task for the
-    # same chunk while the prefetch is still in flight.
-    # In ALL mode, seed all four familiarity levels for chunk 1 immediately;
-    # chunk 2 still only prefetches the active level (latency-vs-cost tradeoff
-    # — the reviewer can A/B chunk 1 while c2 streams behind it).
-    levels_for_prefetch = _ALL_LEVELS if plan.multi_level else (plan.familiarity,)
+    # Kick off background narration for every chunk at the active level so
+    # the reviewer doesn't pay the LLM+TTS latency one chunk at a time.
+    # Concurrency is gated by `llm_semaphore` / `tts_semaphore`, so blasting
+    # a 10-chunk PR doesn't actually run 10 LLM calls or 10 TTS synths in
+    # parallel — it queues them behind the configured cap (defaults: 8 LLM,
+    # 1–4 TTS depending on detected RAM). Result: while the reviewer reads
+    # chunk N, chunks N+1…N+k are already being prepared.
+    #
+    # In ALL mode the first chunk gets all four familiarity levels (so the
+    # level switcher feels instant); later chunks still get only the active
+    # level prefetched, with the other three lazily generated on demand.
+    levels_for_first = _ALL_LEVELS if plan.multi_level else (plan.familiarity,)
     if plan.chunks:
-        for lvl in levels_for_prefetch:
+        for lvl in levels_for_first:
             _maybe_kick_off_narration(ctx, plan, plan.session_id, plan.chunks[0].chunk_id, level=lvl)
-    if len(plan.chunks) > 1:
-        _maybe_kick_off_narration(
-            ctx, plan, plan.session_id, plan.chunks[1].chunk_id,
-            level=plan.familiarity,
-        )
+        for chunk in plan.chunks[1:]:
+            _maybe_kick_off_narration(
+                ctx, plan, plan.session_id, chunk.chunk_id, level=plan.familiarity,
+            )
 
     return plan
 

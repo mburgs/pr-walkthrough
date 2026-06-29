@@ -55,6 +55,11 @@
   font-weight: 600;
 }
 .playBtn:hover {
+  /* Keep the accent fill on hover. Without this, the generic .btn:hover
+   * rule above swaps background to --bg (near-black) while the text
+   * color stays --accent-text (also near-black) — the label disappears. */
+  background: var(--accent);
+  border-color: transparent;
   filter: brightness(1.08);
   color: var(--accent-text);
 }

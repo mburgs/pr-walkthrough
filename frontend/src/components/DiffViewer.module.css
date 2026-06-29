@@ -193,6 +193,23 @@
   border-right: 1px solid var(--border-soft);
 }
 
+/* Hunk gap row — explicit "… N lines hidden …" between non-contiguous
+   hunks so a jump from line 459 → 624 doesn't read as one block. */
+.hunkGapGutter {
+  display: inline-block;
+  width: 44px;
+  text-align: right;
+  padding-right: 8px;
+  color: var(--text-dim);
+  font-size: 12px;
+}
+.hunkGapLabel {
+  color: var(--info);
+  font-size: 11px;
+  font-family: var(--font-mono);
+  padding-left: 6px;
+}
+
 /* Row hover */
 .diffTable :global(tr:hover) :global(.diff-code-normal) {
   background: rgba(255, 255, 255, 0.025) !important;

@@ -11,7 +11,8 @@
 #
 # Env knobs:
 #   PR_WALKTHROUGH_REPO_ROOT          target repo the PRs live in (jedi root)
-#                                     default: /Users/michoel/code/calsync
+#                                     required — set to the absolute path
+#                                     of the repo you want to walk
 #   PR_WALKTHROUGH_PORT               pin the backend port (else auto-pick)
 #   PR_WALKTHROUGH_FRONTEND_PORT      pin the frontend port (else auto-pick)
 #   PR_WALKTHROUGH_TTS_CONCURRENCY    bump if the machine has headroom
@@ -75,7 +76,16 @@ export PR_WALKTHROUGH_ALLOWED_ORIGINS="http://localhost:$frontend_port,http://12
 # same origin, which trips MSW for fixture mode); pointing it at the
 # backend disables MSW and routes through to uvicorn.
 export VITE_BACKEND_URL="http://127.0.0.1:$backend_port"
-export PR_WALKTHROUGH_REPO_ROOT="${PR_WALKTHROUGH_REPO_ROOT:-/Users/michoel/code/calsync}"
+if [ -z "${PR_WALKTHROUGH_REPO_ROOT:-}" ]; then
+  cat >&2 <<'EOF'
+PR_WALKTHROUGH_REPO_ROOT is not set.
+
+Set it to the absolute path of the repo whose PRs you want to walk, e.g.:
+  PR_WALKTHROUGH_REPO_ROOT=~/code/my-project ./scripts/serve
+EOF
+  exit 1
+fi
+export PR_WALKTHROUGH_REPO_ROOT
 # contracts/ sits at the repo root (sibling of backend/) — both have to
 # be importable for the editable install + the `from contracts.*` imports.
 export PYTHONPATH="$repo_root:$repo_root/backend${PYTHONPATH:+:$PYTHONPATH}"
@@ -135,5 +145,9 @@ backend_pid=$!
 ) 2>&1 | awk '{print "[fe] " $0; fflush()}' &
 frontend_pid=$!
 
-# Exit when either child dies; the trap will kill the survivor.
-wait -n
+# Exit when either child dies; the trap will kill the survivor. Using a
+# poll loop (vs. `wait -n`) because macOS still ships bash 3.2, which
+# doesn't know `-n`. 0.5s cadence is responsive enough for a launcher.
+while kill -0 "$backend_pid" 2>/dev/null && kill -0 "$frontend_pid" 2>/dev/null; do
+  sleep 0.5
+done

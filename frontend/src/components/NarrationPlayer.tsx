@@ -116,6 +116,17 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     if (idx !== activeSegment) setActiveSegment(idx);
   };
 
+  // Re-assert rate then play. The browser silently resets playbackRate
+  // back to 1 across src loads (and sometimes between mount and first
+  // play), so simply trusting the [rate, audioUrl] effect lets the
+  // first playback after a page reload run at 1×. Setting rate
+  // *immediately before* play() closes that window in every code path.
+  const startPlay = (audio: HTMLAudioElement) => {
+    audio.playbackRate = rate;
+    audio.play().catch((e) => setError(String(e)));
+    setPlaying(true);
+  };
+
   const jumpToSegment = (i: number) => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -123,10 +134,7 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     if (t === undefined) return;
     audio.currentTime = t / 1000;
     setActiveSegment(i);
-    if (!playing) {
-      audio.play().catch((e) => setError(String(e)));
-      setPlaying(true);
-    }
+    if (!playing) startPlay(audio);
   };
 
   const handlePlay = () => {
@@ -141,23 +149,15 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     // If the audio isn't loaded yet (backend still synthesising), latch the
     // user's intent so playback kicks off the moment the data arrives.
     if (!audioReady) { setPendingPlay(true); return; }
-    audio.play().catch((e) => setError(String(e)));
-    setPlaying(true);
+    startPlay(audio);
   };
 
   const handleCanPlay = () => {
     setAudioReady(true);
-    // Re-assert playbackRate here too. The [rate, audioUrl] effect above
-    // sometimes loses to the browser's internal reset when src changes —
-    // by `canplay` the element is fully ready and the set sticks.
     const audio = audioRef.current;
     if (audio) audio.playbackRate = rate;
-    // If the user already clicked play, honour it now
     if (pendingPlay) {
-      if (audio) {
-        audio.play().catch((e) => setError(String(e)));
-        setPlaying(true);
-      }
+      if (audio) startPlay(audio);
       setPendingPlay(false);
     }
   };

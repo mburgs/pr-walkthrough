@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import { parseDiff, Diff, Hunk as DiffHunk, tokenize } from "react-diff-view";
+import { parseDiff, Diff, Hunk as DiffHunk, Decoration, tokenize } from "react-diff-view";
 import { refractor } from "refractor/all";
 import type { CodeAnchor } from "../contracts";
 
@@ -154,9 +154,28 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
                   tokens={tokens}
                   className={styles.diffTable}
                 >
-                  {(hs) => hs.map((hunk) => (
-                    <DiffHunk key={hunk.content} hunk={hunk} />
-                  ))}
+                  {(hs) => hs.flatMap((hunk, idx) => {
+                    // Show a header row before every hunk so non-contiguous
+                    // ranges read as separate (lines 454-459 jumping to 624
+                    // otherwise looks contiguous). The first hunk gets the
+                    // raw @@ line; subsequent ones get an explicit
+                    // "… N lines hidden …" hint based on the gap from the
+                    // previous hunk's new-side end.
+                    const prev = idx > 0 ? hs[idx - 1] : null;
+                    const skipped = prev
+                      ? hunk.newStart - (prev.newStart + prev.newLines)
+                      : 0;
+                    const label = prev
+                      ? `… ${skipped} line${skipped === 1 ? "" : "s"} hidden (jump to ${hunk.newStart}) …`
+                      : `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
+                    return [
+                      <Decoration key={`dec-${hunk.content}`}>
+                        <span className={styles.hunkGapGutter} aria-hidden>⋮</span>
+                        <span className={styles.hunkGapLabel}>{label}</span>
+                      </Decoration>,
+                      <DiffHunk key={hunk.content} hunk={hunk} />,
+                    ];
+                  })}
                 </Diff>
               </div>
             </div>
