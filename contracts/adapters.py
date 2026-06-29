@@ -17,8 +17,6 @@ from typing import AsyncIterator, Protocol, runtime_checkable
 from contracts.schemas import (
     ChunkNarration,
     CodeAnchor,
-    FollowUp,
-    FollowUpAnswer,
     Hunk,
     PRMetadata,
     RelatedCode,
@@ -29,7 +27,15 @@ from contracts.schemas import (
 
 @runtime_checkable
 class LLMAdapter(Protocol):
-    """Wraps a single LLM provider (Claude). Three call sites only."""
+    """Wraps a single LLM provider (Claude).
+
+    The Protocol intentionally only declares the two synchronous-return
+    methods. Follow-up Q&A is streaming + tool-using (see
+    `ClaudeLLMAdapter.answer_follow_up_streaming` / `FakeLLM`), with a
+    larger signature that's awkward to fit into a Protocol; routes that
+    need it call the method directly on the concrete adapter via the
+    AppContext.
+    """
 
     async def plan_tour(
         self, pr: PRMetadata, diff: list[Hunk]
@@ -41,13 +47,6 @@ class LLMAdapter(Protocol):
         chunk: TourChunk,
         related: list[RelatedCode],
     ) -> ChunkNarration: ...
-
-    async def answer_follow_up(
-        self,
-        plan: TourPlan,
-        history: list[ChunkNarration],
-        follow_up: FollowUp,
-    ) -> FollowUpAnswer: ...
 
 
 @runtime_checkable

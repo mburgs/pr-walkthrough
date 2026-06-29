@@ -319,14 +319,45 @@ class SessionStore:
             return None
         return bytes(row["audio_bytes"])
 
-    def list_follow_up_history(self, session_id: str) -> list[ChunkNarration]:
-        """Return all narrations seen so far, for LLM context."""
+    def list_narrated_chunks(self, session_id: str) -> list[ChunkNarration]:
+        """Return all narrations seen so far, for LLM context.
+
+        Renamed from `list_follow_up_history` — that name was misleading;
+        these are ChunkNarration rows from the narration table, not prior
+        follow-up Q&A. For the latter, use `list_follow_up_qa`.
+        """
         with self._conn() as conn:
             rows = conn.execute(
                 "SELECT narration_json FROM chunk_narrations WHERE session_id=? AND narration_json != ''",
                 (session_id,),
             ).fetchall()
         return [ChunkNarration.model_validate_json(r["narration_json"]) for r in rows]
+
+    def list_follow_up_qa(
+        self, session_id: str
+    ) -> list[tuple[FollowUp, FollowUpAnswer]]:
+        """All prior follow-up Q&A pairs for this session, oldest-first.
+
+        Used to replay conversation history as messages[] to the LLM so
+        each new follow-up sees what was already asked/answered. Ordered
+        by sqlite rowid ascending (insertion order); created_at would
+        also work but rowid avoids tie-breaking when two inserts share
+        the same unixepoch second.
+        """
+        with self._conn() as conn:
+            rows = conn.execute(
+                """SELECT follow_up_json, answer_json
+                   FROM follow_ups WHERE session_id=?
+                   ORDER BY rowid ASC""",
+                (session_id,),
+            ).fetchall()
+        return [
+            (
+                FollowUp.model_validate_json(r["follow_up_json"]),
+                FollowUpAnswer.model_validate_json(r["answer_json"]),
+            )
+            for r in rows
+        ]
 
     # ------------------------------------------------------------------ flags
 

@@ -35,7 +35,7 @@ import os
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from contracts.schemas import FollowUp
+from contracts.schemas import CodeAnchor, FollowUp
 from pr_walkthrough.orchestration import AppContext
 
 from .deps import get_app_context
@@ -74,7 +74,35 @@ async def post_follow_up(
     else:
         audio_bytes = await request.body()
 
-    history = ctx.store.list_follow_up_history(sid)
+    narrated = ctx.store.list_narrated_chunks(sid)
+    qa = ctx.store.list_follow_up_qa(sid)
+    flags = ctx.store.list_flags(sid)
+
+    # Locate the chunk the reviewer is currently on (may be None at the
+    # very start of a session or after the tour wraps) and pre-fetch
+    # related code for its first hunk. Done up-front so the LLM call
+    # below is purely network-bound and stays inside the streaming gen.
+    current_chunk = next(
+        (c for c in state.plan.chunks if c.chunk_id == state.current_chunk_id),
+        None,
+    )
+    related_for_current: list = []
+    if current_chunk and current_chunk.hunks:
+        h = current_chunk.hunks[0]
+        anchor = CodeAnchor(file=h.file, line_range=(h.new_range[0], h.new_range[0]))
+        try:
+            related_for_current = await ctx.context.related(anchor, ctx.repo_root)
+        except Exception:
+            log.warning("related-code lookup failed for follow-up", exc_info=True)
+
+    # Same full-diff shape the chunk worker uses for the narration system
+    # block, so the model sees the whole PR — not just the slice that's
+    # been narrated so far.
+    diff_context = "\n\n".join(
+        f"{h.file} {h.header}\n{h.body}"
+        for c in state.plan.chunks
+        for h in c.hunks
+    )
 
     async def synth_audio_bg(answer_id: str, text: str) -> None:
         """Background TTS — runs after the SSE response returns so the
@@ -127,7 +155,15 @@ async def post_follow_up(
         async with ctx.llm_semaphore:
             try:
                 stream = await ctx.llm.answer_follow_up_streaming(
-                    state.plan, history, follow_up,
+                    plan=state.plan,
+                    narrated_chunks=narrated,
+                    qa_history=qa,
+                    current_chunk=current_chunk,
+                    related_for_current=related_for_current,
+                    flags=flags,
+                    diff_context=diff_context,
+                    repo_root=ctx.repo_root,
+                    follow_up=follow_up,
                 )
             except Exception as e:
                 log.exception("follow-up LLM call failed")

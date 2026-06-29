@@ -8,8 +8,16 @@ templates are kept separate to keep the stable vs volatile split clean.
 
 from __future__ import annotations
 
-from contracts.schemas import ChunkNarration, FollowUp, Hunk, PRMetadata, TourChunk, TourPlan
-from contracts.schemas import RelatedCode
+from contracts.schemas import (
+    ChunkNarration,
+    Flag,
+    FollowUp,
+    Hunk,
+    PRMetadata,
+    RelatedCode,
+    TourChunk,
+    TourPlan,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -410,62 +418,160 @@ aren't PR comments, they're "open this with attention" notes.
 # answer_follow_up helpers
 # ---------------------------------------------------------------------------
 
+def build_follow_up_system_addendum(plan: TourPlan, diff_context: str) -> str:
+    """Cacheable system block for the follow-up Q&A loop.
+
+    Mirrors `build_narrate_chunk_system_addendum` in spirit: PR metadata,
+    the full diff, and a CHUNK MAP so the model can ground answers in
+    "what does this PR look like as a whole". Lives in a cached system
+    block because it's stable across every follow-up in the session.
+    """
+    chunk_map = "\n".join(
+        f"  {c.chunk_id}: {c.summary} "
+        f"[{c.est_concern_level}] files={', '.join(c.files) or '(none)'}"
+        for c in plan.chunks
+    )
+    return (
+        "PR METADATA\n"
+        "-----------\n"
+        f"URL: {plan.pr.url}\n"
+        f"Title: {plan.pr.title}\n"
+        f"Author: {plan.pr.author}\n"
+        f"Base: {plan.pr.base_ref}  Head: {plan.pr.head_ref}\n"
+        f"Description:\n{plan.pr.body or '(no description)'}\n\n"
+        "FULL DIFF\n"
+        "---------\n"
+        f"{diff_context}\n\n"
+        "CHUNK MAP\n"
+        "---------\n"
+        f"{chunk_map}\n"
+    )
+
+
 def build_follow_up_user_message(
     plan: TourPlan,
-    history: list[ChunkNarration],
+    narrated_chunks: list[ChunkNarration],
+    current_chunk: TourChunk | None,
+    related_for_current: list[RelatedCode],
+    flags: list[Flag],
     follow_up: FollowUp,
 ) -> str:
     """Build the user-turn message for answer_follow_up.
 
-    Intent: Give Claude the session history (which chunks have been narrated
-    so far and their concerns) plus the current question, so answers are
-    grounded in what has already been discussed. History is bounded by the
-    number of chunks narrated, so it is naturally short enough for the user
-    turn without caching.
+    Intent: surface everything that's local to *this* question — what's
+    been narrated, what the reviewer is staring at right now, related
+    code we already pulled, the running concern list — without dumping
+    it all into the cached system block (which is for PR-wide stable
+    context). History narration text is included in full; the prior
+    truncation to 200 chars threw away the very content the model needs
+    to give a continuous-feeling answer.
     """
-    history_text = ""
-    if history:
-        parts = []
-        for narration in history:
-            concern_strs = [
-                f"    [{c.severity}] {c.text}"
-                for c in narration.concerns
+    parts: list[str] = []
+
+    if narrated_chunks:
+        narrated_blocks = []
+        for n in narrated_chunks:
+            concern_lines = [
+                f"    [{c.severity}] {c.text}" for c in n.concerns
             ]
-            concern_block = (
-                "\n  Concerns:\n" + "\n".join(concern_strs)
-                if concern_strs
+            anchor_lines = []
+            for seg in n.segments:
+                if seg.anchor is not None:
+                    a = seg.anchor
+                    anchor_lines.append(
+                        f"    {a.file}:{a.line_range[0]}-{a.line_range[1]}"
+                    )
+            extras = []
+            if concern_lines:
+                extras.append("  Concerns:\n" + "\n".join(concern_lines))
+            if anchor_lines:
+                extras.append("  Anchors:\n" + "\n".join(anchor_lines))
+            if n.look_closer_for:
+                extras.append(
+                    "  Look closer for:\n"
+                    + "\n".join(f"    - {s}" for s in n.look_closer_for)
+                )
+            extra_text = ("\n" + "\n".join(extras)) if extras else ""
+            narrated_blocks.append(
+                f"Chunk {n.chunk_id}:\n{n.narration}{extra_text}"
+            )
+        parts.append(
+            "NARRATED SO FAR\n---------------\n" + "\n\n".join(narrated_blocks)
+        )
+
+    if current_chunk is not None:
+        hunk_text = "\n\n".join(
+            format_hunk_for_narration(h) for h in current_chunk.hunks
+        )
+        parts.append(
+            f"CURRENT CHUNK\n-------------\n"
+            f"{current_chunk.chunk_id}: {current_chunk.summary}\n\n"
+            f"{hunk_text}"
+        )
+
+    if related_for_current:
+        lines = []
+        for rc in related_for_current:
+            a = rc.anchor
+            lines.append(
+                f"- {a.file}:{a.line_range[0]}-{a.line_range[1]} "
+                f"[{rc.relationship}]\n```\n{rc.snippet}\n```"
+            )
+        parts.append("RELATED CODE\n------------\n" + "\n".join(lines))
+
+    if flags:
+        lines = []
+        for f in flags:
+            anchor_str = (
+                f" @ {f.anchor.file}:{f.anchor.line_range[0]}-{f.anchor.line_range[1]}"
+                if f.anchor is not None
                 else ""
             )
-            parts.append(
-                f"  Chunk {narration.chunk_id}: {narration.narration[:200]}…"
-                f"{concern_block}"
-            )
-        history_text = "NARRATED SO FAR\n---------------\n" + "\n\n".join(parts) + "\n\n"
+            lines.append(f"- [{f.severity}]{anchor_str}\n  {f.body}")
+        parts.append(
+            "EXISTING FLAGS (don't propose duplicates as new_concerns)\n"
+            "---------------------------------------------------------\n"
+            + "\n".join(lines)
+        )
 
     context_note = ""
     if follow_up.chunk_id:
-        context_note = f"The reviewer is currently viewing chunk {follow_up.chunk_id}.\n"
-
-    confidence_note = ""
-    if follow_up.transcript_confidence is not None and follow_up.transcript_confidence < 0.85:
-        confidence_note = (
-            f"(Voice transcript confidence: {follow_up.transcript_confidence:.0%} — "
-            "treat the question text as approximate.)\n"
+        context_note = (
+            f"The reviewer is currently viewing chunk {follow_up.chunk_id}."
         )
 
-    return f"""\
-{history_text}\
-{context_note}\
-{confidence_note}\
-REVIEWER QUESTION
------------------
-{follow_up.question_text}
+    confidence_note = ""
+    if (
+        follow_up.transcript_confidence is not None
+        and follow_up.transcript_confidence < 0.85
+    ):
+        confidence_note = (
+            f"(Voice transcript confidence: "
+            f"{follow_up.transcript_confidence:.0%} — treat the question "
+            "text as approximate.)"
+        )
 
-TASK
-----
-Answer the question concisely and accurately in the context of this PR. \
-If the question reveals a genuine concern not yet flagged, add it to \
-new_concerns. Populate references with any code anchors relevant to the \
-answer (file + line range). If you are uncertain about something, say so \
-rather than guessing.
-"""
+    notes = "\n".join(s for s in (context_note, confidence_note) if s)
+    if notes:
+        parts.append(notes)
+
+    parts.append(
+        "REVIEWER QUESTION\n-----------------\n" + follow_up.question_text
+    )
+
+    parts.append(
+        "TASK\n----\n"
+        "Answer the question concisely and accurately in the context of "
+        "this PR. You have two retrieval tools available — `read_file_lines` "
+        "and `grep_repo` — for looking up code outside the diff (helper "
+        "definitions, callers, related types). Use them when the answer "
+        "depends on code you can't see in the diff or the related-code "
+        "block; skip them when the diff already shows everything you need. "
+        "Once you have what you need, call `emit_follow_up_answer` exactly "
+        "once. If the question reveals a genuine concern not already in "
+        "EXISTING FLAGS, add it to new_concerns. Populate references with "
+        "any code anchors relevant to the answer. If you are uncertain "
+        "about something, say so rather than guessing."
+    )
+
+    return "\n\n".join(parts) + "\n"

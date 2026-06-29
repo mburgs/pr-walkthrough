@@ -220,6 +220,35 @@ def test_follow_up_streams_tokens_before_final(client: TestClient) -> None:
     assert streamed == final["answer"]["answer_text"]
 
 
+def test_follow_up_qa_history_replayed(
+    client: TestClient, in_memory_ctx
+) -> None:
+    """Two consecutive follow-ups on the same session should both be
+    persisted and `list_follow_up_qa` should return them in order so the
+    adapter can replay the conversation."""
+    sid = _create_session(client)
+    _wait_for_chunk(client, sid, "c1")
+
+    questions = [
+        "What's the goal of this change?",
+        "Is the migration backwards-compatible?",
+    ]
+    for q in questions:
+        resp = client.post(
+            f"/sessions/{sid}/follow-up",
+            json={"chunk_id": "c1", "question_text": q},
+        )
+        assert resp.status_code == 200, resp.text
+        events = _parse_sse(resp.text)
+        assert any(e[0] == "final" for e in events)
+
+    qa = in_memory_ctx.store.list_follow_up_qa(sid)
+    assert len(qa) == 2
+    assert [pair[0].question_text for pair in qa] == questions
+    for pair in qa:
+        assert pair[1].answer_text  # FakeLLM populates the fixture answer
+
+
 def test_create_flag(client: TestClient) -> None:
     sid = _create_session(client)
     flag = _create_flag(client, sid)

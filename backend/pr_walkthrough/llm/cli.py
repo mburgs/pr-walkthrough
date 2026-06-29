@@ -135,8 +135,8 @@ async def cmd_answer(
         return
 
     plan = load_tour_plan(fixture_dir)
-    # Gather history: all narration chunks before and including chunk_id
-    history: list[ChunkNarration] = []
+    # Gather narrated chunks (up to and including chunk_id) for context.
+    narrated: list[ChunkNarration] = []
     chunk_ids_in_plan = [c.chunk_id for c in plan.chunks]
     if chunk_id in chunk_ids_in_plan:
         idx = chunk_ids_in_plan.index(chunk_id)
@@ -145,11 +145,31 @@ async def cmd_answer(
         for cid in narrated_ids:
             narration_path = chunks_dir / f"{cid}.narration.json"
             if narration_path.exists():
-                history.append(load_chunk_narration(fixture_dir, cid))
+                narrated.append(load_chunk_narration(fixture_dir, cid))
 
     follow_up = FollowUp(chunk_id=chunk_id, question_text=question)
+    current_chunk = next((c for c in plan.chunks if c.chunk_id == chunk_id), None)
+    diff_context = "\n\n".join(
+        f"{h.file} {h.header}\n{h.body}"
+        for c in plan.chunks
+        for h in c.hunks
+    )
     adapter = ClaudeLLMAdapter()
-    answer = await adapter.answer_follow_up(plan, history, follow_up)
+    stream = await adapter.answer_follow_up_streaming(
+        plan=plan,
+        narrated_chunks=narrated,
+        qa_history=[],
+        current_chunk=current_chunk,
+        related_for_current=[],
+        flags=[],
+        diff_context=diff_context,
+        repo_root=Path.cwd(),
+        follow_up=follow_up,
+    )
+    # Drain the token stream (CLI prints structured result at the end).
+    async for _ in stream:
+        pass
+    answer = stream.get_result()
     print(answer.model_dump_json(indent=2))
 
 

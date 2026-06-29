@@ -47,21 +47,20 @@ class FakeLLM:
             raw["chunk_id"] = cid
         return ChunkNarration.model_validate(raw)
 
-    async def answer_follow_up(
-        self,
-        plan: TourPlan,
-        history: list[Any],
-        follow_up: FollowUp,
-    ) -> FollowUpAnswer:
-        raw = json.loads((_FIXTURES / "follow_up_example.json").read_text())
-        return FollowUpAnswer.model_validate(raw["answer"])
-
     async def answer_follow_up_streaming(
         self,
         plan: TourPlan,
-        history: list[Any],
+        narrated_chunks: list[Any],
+        qa_history: list[Any],
+        current_chunk: Any,
+        related_for_current: list[Any],
+        flags: list[Any],
+        diff_context: str,
+        repo_root: Any,
         follow_up: FollowUp,
     ) -> "_FakeFollowUpStream":
+        # Fake ignores all the new context params — fixture answer is fine
+        # for routing/transport tests. Real adapter exercises the full shape.
         raw = json.loads((_FIXTURES / "follow_up_example.json").read_text())
         answer = FollowUpAnswer.model_validate(raw["answer"])
         return _FakeFollowUpStream(answer)

@@ -36,7 +36,9 @@ Model choices
 from __future__ import annotations
 
 import json
+import logging
 import sys
+from pathlib import Path
 from typing import Any, AsyncIterator
 
 import anthropic
@@ -45,7 +47,7 @@ from pydantic import ValidationError
 from contracts.schemas import (
     ChunkNarration,
     CodeAnchor,
-    Concern,
+    Flag,
     FollowUp,
     FollowUpAnswer,
     Hunk,
@@ -57,12 +59,15 @@ from contracts.schemas import (
 
 from .prompts import (
     SYSTEM_PROMPT,
+    build_follow_up_system_addendum,
     build_follow_up_user_message,
     build_narrate_chunk_system_addendum,
     build_narrate_chunk_user_message,
     build_plan_tour_user_message,
-    format_hunk_for_plan,
 )
+from .tools import GREP_REPO_TOOL, READ_FILE_LINES_TOOL, execute_tool
+
+log = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # JSON schemas for tool-use structured output
@@ -555,121 +560,209 @@ class ClaudeLLMAdapter:
     async def answer_follow_up_streaming(
         self,
         plan: TourPlan,
-        history: list[ChunkNarration],
+        narrated_chunks: list[ChunkNarration],
+        qa_history: list[tuple[FollowUp, FollowUpAnswer]],
+        current_chunk: TourChunk | None,
+        related_for_current: list[RelatedCode],
+        flags: list[Flag],
+        diff_context: str,
+        repo_root: Path,
         follow_up: FollowUp,
     ) -> "_FollowUpStream":
-        """Stream the follow-up answer's `answer_text` field token-by-token.
+        """Stream the follow-up answer with prior Q&A replay + retrieval tools.
 
         Returns a `_FollowUpStream` — an AsyncIterator[str] of decoded
-        characters from the streaming tool_input JSON, with a final
-        `.get_result()` for the structured FollowUpAnswer after the
-        stream is exhausted. Pattern mirrors narrate_chunk_streaming.
+        characters from the streaming `answer_text` tool_input JSON,
+        with a final `.get_result()` for the structured `FollowUpAnswer`
+        once the iterator is exhausted.
 
-        Why streaming the JSON: the API streams tool_use as
-        `input_json_delta` events carrying partial JSON fragments. We
-        watch for the `"answer_text":"` key prefix, then emit decoded
-        characters of its string value until the closing quote. The rest
-        of the structured fields (new_concerns, references) come through
-        in the final assembled message; we re-validate the whole shape
-        from there.
+        Conversation shape:
+
+        - System: SYSTEM_PROMPT + the cached PR/diff/chunk-map addendum.
+          Both blocks are marked cacheable so the second-and-later
+          follow-ups in a session reuse them.
+        - Messages: every prior (question, answer_text) pair is replayed
+          as alternating user/assistant turns, then the current user
+          message lands last. Replaying past answers as assistant turns
+          (rather than stuffing them into the system block) keeps the
+          model's sense of "what I have already told this reviewer"
+          intact across turns.
+        - Tools: `read_file_lines`, `grep_repo`, and the structured
+          `emit_follow_up_answer` output tool. tool_choice is left on
+          auto — the model decides whether to retrieve before answering.
+
+        Tool-use loop: stream each turn, executing retrieval tools and
+        appending their results until the model fires
+        `emit_follow_up_answer`. Capped at 5 iterations so a runaway
+        model doesn't burn budget. Only `answer_text` characters from
+        the answer-tool stream are yielded to the caller — the retrieval
+        tools' JSON arguments are not exposed.
         """
-        user_message = build_follow_up_user_message(plan, history, follow_up)
+        system_addendum = build_follow_up_system_addendum(plan, diff_context)
+        first_user_message = build_follow_up_user_message(
+            plan=plan,
+            narrated_chunks=narrated_chunks,
+            current_chunk=current_chunk,
+            related_for_current=related_for_current,
+            flags=flags,
+            follow_up=follow_up,
+        )
+
+        # Replay prior Q&A as alternating user/assistant turns, then the
+        # current user message. The current message is the only one with
+        # diff/related-code context (the prior ones were sent the same
+        # way at the time — we don't re-send their bodies here, just the
+        # question text — which is fine because the system block holds
+        # the full PR + diff that grounds everything).
+        messages: list[dict[str, Any]] = []
+        for prior_q, prior_a in qa_history:
+            messages.append({"role": "user", "content": prior_q.question_text})
+            messages.append({"role": "assistant", "content": prior_a.answer_text})
+        messages.append({"role": "user", "content": first_user_message})
+
+        system_blocks = [
+            {
+                "type": "text",
+                "text": SYSTEM_PROMPT,
+                "cache_control": {"type": "ephemeral"},
+            },
+            {
+                "type": "text",
+                "text": system_addendum,
+                "cache_control": {"type": "ephemeral"},
+            },
+        ]
+
         result_holder: list[FollowUpAnswer] = []
 
         async def _token_stream() -> AsyncIterator[str]:
-            in_answer = False
-            prefix_buf = ""
-            ANSWER_KEY = '"answer_text": "'
-            ANSWER_KEY_ALT = '"answer_text":"'
+            # Mutable conversation that the loop extends each turn.
+            convo: list[dict[str, Any]] = list(messages)
+            MAX_ITERS = 5
+            for iteration in range(MAX_ITERS):
+                # Per-turn state for streaming answer_text tokens.
+                # `current_tool` tracks which content block is being built
+                # so we only emit chars from emit_follow_up_answer's
+                # `answer_text` field — never from a retrieval tool's args.
+                current_tool: str | None = None
+                in_answer = False
+                prefix_buf = ""
+                ANSWER_KEY = '"answer_text": "'
+                ANSWER_KEY_ALT = '"answer_text":"'
 
-            async with self._client.messages.stream(
-                model=self._narrate_model,
-                max_tokens=2048,
-                system=[
-                    {
-                        "type": "text",
-                        "text": SYSTEM_PROMPT,
-                        "cache_control": {"type": "ephemeral"},
-                    }
-                ],
-                tools=[ANSWER_FOLLOW_UP_TOOL],
-                tool_choice={"type": "tool", "name": "emit_follow_up_answer"},
-                messages=[{"role": "user", "content": user_message}],
-            ) as stream:
-                async for event in stream:
-                    if event.type != "content_block_delta":
-                        continue
-                    delta = event.delta
-                    if not hasattr(delta, "partial_json"):
-                        continue
-                    chunk_json = delta.partial_json
-
-                    if not in_answer:
-                        prefix_buf += chunk_json
-                        for key in (ANSWER_KEY, ANSWER_KEY_ALT):
-                            idx = prefix_buf.find(key)
-                            if idx == -1:
-                                continue
-                            in_answer = True
-                            remainder = prefix_buf[idx + len(key):]
-                            decoded, done = _extract_narration_fragment(remainder, [])
+                async with self._client.messages.stream(
+                    model=self._narrate_model,
+                    max_tokens=4096,
+                    system=system_blocks,
+                    tools=[
+                        READ_FILE_LINES_TOOL,
+                        GREP_REPO_TOOL,
+                        ANSWER_FOLLOW_UP_TOOL,
+                    ],
+                    messages=convo,
+                ) as stream:
+                    async for event in stream:
+                        if event.type == "content_block_start":
+                            block = event.content_block
+                            if getattr(block, "type", None) == "tool_use":
+                                current_tool = getattr(block, "name", None)
+                                in_answer = False
+                                prefix_buf = ""
+                            else:
+                                current_tool = None
+                            continue
+                        if event.type == "content_block_stop":
+                            current_tool = None
+                            in_answer = False
+                            prefix_buf = ""
+                            continue
+                        if event.type != "content_block_delta":
+                            continue
+                        if current_tool != "emit_follow_up_answer":
+                            continue
+                        delta = event.delta
+                        if not hasattr(delta, "partial_json"):
+                            continue
+                        chunk_json = delta.partial_json
+                        if not in_answer:
+                            prefix_buf += chunk_json
+                            for key in (ANSWER_KEY, ANSWER_KEY_ALT):
+                                idx = prefix_buf.find(key)
+                                if idx == -1:
+                                    continue
+                                in_answer = True
+                                remainder = prefix_buf[idx + len(key):]
+                                decoded, done = _extract_narration_fragment(remainder, [])
+                                if decoded:
+                                    yield decoded
+                                if done:
+                                    in_answer = False
+                                prefix_buf = ""
+                                break
+                        else:
+                            decoded, done = _extract_narration_fragment(chunk_json, [])
                             if decoded:
                                 yield decoded
                             if done:
                                 in_answer = False
-                            prefix_buf = ""
-                            break
-                    else:
-                        decoded, done = _extract_narration_fragment(chunk_json, [])
-                        if decoded:
-                            yield decoded
-                        if done:
-                            in_answer = False
 
-                final_msg = await stream.get_final_message()
+                    final_msg = await stream.get_final_message()
 
-            raw = self._extract_tool_input(final_msg, "emit_follow_up_answer")
-            try:
-                result_holder.append(FollowUpAnswer.model_validate(raw))
-            except ValidationError as e:
-                raise ValueError(
-                    f"FollowUpAnswer schema mismatch:\n{e}\n\nRaw: {json.dumps(raw, indent=2)}"
-                ) from e
+                # Walk the final message's tool_use blocks. Two cases:
+                #   (a) emit_follow_up_answer — validate, store, we're done.
+                #   (b) retrieval tool — execute, collect tool_results,
+                #       feed them back in the next loop iteration.
+                tool_uses = [
+                    b for b in final_msg.content
+                    if getattr(b, "type", None) == "tool_use"
+                ]
+                answer_block = next(
+                    (b for b in tool_uses if b.name == "emit_follow_up_answer"),
+                    None,
+                )
+                if answer_block is not None:
+                    raw = answer_block.input
+                    try:
+                        result_holder.append(FollowUpAnswer.model_validate(raw))
+                    except ValidationError as e:
+                        raise ValueError(
+                            f"FollowUpAnswer schema mismatch:\n{e}\n\n"
+                            f"Raw: {json.dumps(raw, indent=2)}"
+                        ) from e
+                    return
+
+                retrieval_uses = [
+                    b for b in tool_uses if b.name != "emit_follow_up_answer"
+                ]
+                if not retrieval_uses:
+                    raise ValueError(
+                        "Follow-up loop produced neither a retrieval call "
+                        "nor an answer. stop_reason="
+                        f"{getattr(final_msg, 'stop_reason', 'unknown')!r}"
+                    )
+
+                # Append assistant turn + tool_result user turn, then loop.
+                convo.append({"role": "assistant", "content": final_msg.content})
+                tool_results: list[dict[str, Any]] = []
+                for use in retrieval_uses:
+                    try:
+                        out = execute_tool(use.name, dict(use.input), repo_root)
+                    except Exception as e:  # defensive — execute_tool catches its own
+                        log.exception("retrieval tool %s raised", use.name)
+                        out = f"ERROR: {e}"
+                    tool_results.append({
+                        "type": "tool_result",
+                        "tool_use_id": use.id,
+                        "content": out,
+                    })
+                convo.append({"role": "user", "content": tool_results})
+
+            raise ValueError(
+                f"Follow-up tool loop exceeded {MAX_ITERS} iterations without "
+                "an answer."
+            )
 
         return _FollowUpStream(_token_stream(), result_holder)
-
-    async def answer_follow_up(
-        self,
-        plan: TourPlan,
-        history: list[ChunkNarration],
-        follow_up: FollowUp,
-    ) -> FollowUpAnswer:
-        """Answer a reviewer's mid-tour question with full session context."""
-        user_message = build_follow_up_user_message(plan, history, follow_up)
-
-        response = await self._client.messages.create(
-            model=self._narrate_model,
-            max_tokens=2048,
-            system=[
-                {
-                    "type": "text",
-                    "text": SYSTEM_PROMPT,
-                    "cache_control": {"type": "ephemeral"},
-                }
-            ],
-            tools=[ANSWER_FOLLOW_UP_TOOL],
-            tool_choice={"type": "tool", "name": "emit_follow_up_answer"},
-            messages=[{"role": "user", "content": user_message}],
-        )
-
-        raw = self._extract_tool_input(response, "emit_follow_up_answer")
-        try:
-            answer = FollowUpAnswer.model_validate(raw)
-        except ValidationError as e:
-            raise ValueError(
-                f"FollowUpAnswer schema mismatch:\n{e}\n\nRaw: {json.dumps(raw, indent=2)}"
-            ) from e
-        return answer
 
     # ------------------------------------------------------------------
     # Internal helpers
