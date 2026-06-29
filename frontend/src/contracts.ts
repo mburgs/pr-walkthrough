@@ -92,7 +92,9 @@ export interface NarrationSegment {
 export interface ChunkNarration {
   chunk_id: string;
   narration: string;
-  /** Ordered narration segments. Empty array on older narrations or fallback. */
+  /** Optional whole-file/big-picture orientation, surfaced as segment[0] with no anchor. */
+  intro: string | null;
+  /** Ordered narration segments. First is the intro (if any, unanchored); the rest are body. */
   segments: NarrationSegment[];
   /** Cumulative start-time (ms) per segment within the concatenated audio. */
   segment_offsets_ms: number[];

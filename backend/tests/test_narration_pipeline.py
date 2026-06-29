@@ -9,9 +9,7 @@ import pytest
 from contracts.schemas import (
     ChunkNarration, Concern, Hunk, NarrationSegment, CodeAnchor, TourChunk,
 )
-from pr_walkthrough.llm.adapter import (
-    ClaudeLLMAdapter, _coerce_anchors, _snap_anchors_to_chunk_hunks,
-)
+from pr_walkthrough.llm.adapter import _coerce_anchors
 from pr_walkthrough.llm.prompts import (
     build_narrate_chunk_system_addendum,
     format_hunk_for_narration,
@@ -102,47 +100,7 @@ class TestCoerceAnchors:
 
 
 # ---------------------------------------------------------------------------
-# _parse_chunk_narration: segments → narration text + anchor coercion
-# ---------------------------------------------------------------------------
-
-class TestParseChunkNarration:
-    def test_derives_narration_from_segments(self):
-        raw = {
-            "chunk_id": "c1",
-            "segments": [
-                {"text": "First segment.", "anchor": None},
-                {"text": "Second segment.", "anchor": {"file": "a.py", "line_range": [1, 3]}},
-            ],
-            "related_code": [],
-            "concerns": [],
-            "look_closer_for": [],
-        }
-        out = ClaudeLLMAdapter._parse_chunk_narration(raw)
-        assert isinstance(out, ChunkNarration)
-        # narration = " ".join(segment texts)
-        assert out.narration == "First segment. Second segment."
-        assert out.segments == [
-            NarrationSegment(text="First segment.", anchor=None),
-            NarrationSegment(text="Second segment.", anchor=CodeAnchor(file="a.py", line_range=(1, 3))),
-        ]
-
-    def test_handles_single_element_anchor_in_segment(self):
-        # Combines the coercion fix with parsing
-        raw = {
-            "chunk_id": "c1",
-            "segments": [
-                {"text": "hi", "anchor": {"file": "a.py", "line_range": [42]}},
-            ],
-            "related_code": [],
-            "concerns": [],
-            "look_closer_for": [],
-        }
-        out = ClaudeLLMAdapter._parse_chunk_narration(raw)
-        assert out.segments[0].anchor.line_range == (42, 42)
-
-
-# ---------------------------------------------------------------------------
-# format_hunk_for_narration: line-numbered prompt
+# format_hunk_for_narration: hunk render for the narration user message
 # ---------------------------------------------------------------------------
 
 def _make_hunk(file: str, new_start: int, new_count: int, body: str) -> Hunk:
@@ -154,40 +112,6 @@ def _make_hunk(file: str, new_start: int, new_count: int, body: str) -> Hunk:
         body=body,
     )
 
-
-class TestFormatHunkForNarration:
-    def test_prefixes_added_lines_with_new_side_line_number(self):
-        hunk = _make_hunk("x.py", 10, 3, "+foo\n+bar\n+baz\n")
-        out = format_hunk_for_narration(hunk)
-        assert "L  10  +foo" in out
-        assert "L  11  +bar" in out
-        assert "L  12  +baz" in out
-
-    def test_marks_deleted_lines_with_dashes_not_numbers(self):
-        hunk = _make_hunk("x.py", 10, 2, "-old1\n+new1\n")
-        out = format_hunk_for_narration(hunk)
-        # Removed lines are unanchorable (anchors live on the new side)
-        assert "L----  -old1" in out
-        # Inserted line gets the new-side number; the - line does NOT advance
-        assert "L  10  +new1" in out
-
-    def test_context_lines_advance_new_side_counter(self):
-        hunk = _make_hunk("x.py", 5, 4, " ctx1\n+ins\n ctx2\n+ins2\n")
-        out = format_hunk_for_narration(hunk)
-        assert "L   5   ctx1" in out
-        assert "L   6  +ins" in out
-        assert "L   7   ctx2" in out
-        assert "L   8  +ins2" in out
-
-    def test_file_header_still_present(self):
-        hunk = _make_hunk("path/to/x.py", 1, 1, "+single\n")
-        out = format_hunk_for_narration(hunk)
-        assert out.startswith("### path/to/x.py")
-
-
-# ---------------------------------------------------------------------------
-# _snap_anchors_to_chunk_hunks: defense-in-depth against drift
-# ---------------------------------------------------------------------------
 
 def _chunk_with(file: str, ranges: list[tuple[int, int]]) -> TourChunk:
     """Build a minimal TourChunk with hunks at the given new-side ranges."""
@@ -202,89 +126,24 @@ def _chunk_with(file: str, ranges: list[tuple[int, int]]) -> TourChunk:
     )
 
 
-def _seg(text: str, anchor: CodeAnchor | None = None) -> NarrationSegment:
-    return NarrationSegment(text=text, anchor=anchor)
+class TestFormatHunkForNarration:
+    def test_file_header_present(self):
+        hunk = _make_hunk("path/to/x.py", 1, 1, "+single\n")
+        out = format_hunk_for_narration(hunk)
+        assert out.startswith("### path/to/x.py")
 
-
-class TestSnapAnchorsToChunkHunks:
-    def test_overlapping_anchor_left_alone(self):
-        chunk = _chunk_with("a.py", [(10, 30)])
-        n = ChunkNarration(
-            chunk_id="c1",
-            narration="x",
-            segments=[_seg("hi", CodeAnchor(file="a.py", line_range=(12, 14)))],
-            related_code=[], concerns=[], look_closer_for=[],
-        )
-        out = _snap_anchors_to_chunk_hunks(n, chunk)
-        assert out.segments[0].anchor.line_range == (12, 14)
-
-    def test_anchor_above_hunk_snaps_to_hunk_start(self):
-        chunk = _chunk_with("a.py", [(20, 30)])
-        n = ChunkNarration(
-            chunk_id="c1",
-            narration="x",
-            segments=[_seg("hi", CodeAnchor(file="a.py", line_range=(15, 17)))],
-            related_code=[], concerns=[], look_closer_for=[],
-        )
-        out = _snap_anchors_to_chunk_hunks(n, chunk)
-        # Snapped: start clamped into the hunk, span preserved (here truncated to fit)
-        snapped = out.segments[0].anchor.line_range
-        assert snapped == (20, 22)
-
-    def test_anchor_for_wrong_file_is_dropped(self):
-        chunk = _chunk_with("a.py", [(10, 30)])
-        n = ChunkNarration(
-            chunk_id="c1",
-            narration="x",
-            segments=[_seg("hi", CodeAnchor(file="other.py", line_range=(12, 14)))],
-            related_code=[], concerns=[], look_closer_for=[],
-        )
-        out = _snap_anchors_to_chunk_hunks(n, chunk)
-        assert out.segments[0].anchor is None
-
-    def test_concern_anchors_get_same_treatment(self):
-        chunk = _chunk_with("a.py", [(20, 30)])
-        n = ChunkNarration(
-            chunk_id="c1",
-            narration="x",
-            segments=[_seg("hi")],
-            concerns=[Concern(
-                severity="medium", text="t", suggested_question="q",
-                anchor=CodeAnchor(file="a.py", line_range=(15, 16)),
-            )],
-            related_code=[], look_closer_for=[],
-        )
-        out = _snap_anchors_to_chunk_hunks(n, chunk)
-        assert out.concerns[0].anchor.line_range == (20, 21)
-
-    def test_unanchored_segment_stays_unanchored(self):
-        chunk = _chunk_with("a.py", [(10, 30)])
-        n = ChunkNarration(
-            chunk_id="c1",
-            narration="x",
-            segments=[_seg("intro", None)],
-            related_code=[], concerns=[], look_closer_for=[],
-        )
-        out = _snap_anchors_to_chunk_hunks(n, chunk)
-        assert out.segments[0].anchor is None
-
-    def test_anchor_between_hunks_snaps_to_closer_by_interval(self):
-        """Regression: an anchor falling between two hunks must snap to the
-        hunk whose nearest edge is closer, not whose start line is closer.
-        Anchor at (100,105) between (10,20) and (200,210): gap-to-first=80
-        (105 vs 20), gap-to-second=95 (200 vs 105). Should snap to first.
-        Previously the start-line metric snapped to the further hunk."""
-        chunk = _chunk_with("a.py", [(10, 20), (200, 210)])
-        n = ChunkNarration(
-            chunk_id="c1",
-            narration="x",
-            segments=[_seg("hi", CodeAnchor(file="a.py", line_range=(100, 105)))],
-            related_code=[], concerns=[], look_closer_for=[],
-        )
-        out = _snap_anchors_to_chunk_hunks(n, chunk)
-        snapped = out.segments[0].anchor.line_range
-        # Falls inside (10,20) after clamp; preserved span 5 → end clamped at 20.
-        assert snapped == (20, 20)
+    def test_diff_body_preserved_verbatim(self):
+        # The model gets raw +/-/' ' markers — line numbers are no longer
+        # prefixed (the anchor pass handles line attribution, and inline
+        # numbers would tempt the model to spell them out in prose).
+        hunk = _make_hunk("x.py", 10, 3, "+foo\n+bar\n+baz\n")
+        out = format_hunk_for_narration(hunk)
+        assert "+foo" in out
+        assert "+bar" in out
+        assert "+baz" in out
+        # Old format leaked line numbers; new format must not
+        assert "L  10" not in out
+        assert "L----" not in out
 
 
 # ---------------------------------------------------------------------------

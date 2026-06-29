@@ -58,11 +58,15 @@ Only surface a concern if it is genuinely worth a PR comment. Low severity = \
 the suggested_question field as ready-to-post PR comment wording — the \
 reviewer should be able to copy it verbatim.
 
-Code anchors
-------------
-All line numbers in segment, related_code, and concern anchors refer to \
-post-change line numbers on the new side of the diff (the 'new_range' side). \
-Always provide specific, correct line numbers rather than guessing.
+How highlighting works (so you can write naturally)
+---------------------------------------------------
+The UI auto-highlights the relevant diff lines as your narration plays — a \
+separate pass attaches each sentence of your `body` to specific lines. You \
+do NOT pick line numbers and you should NOT spell them out in prose. Say \
+what the code does ("the rotate helper deletes every session for the user"), \
+not where it sits ("on line 56, rotate deletes…"). Code anchors on \
+`concerns` and `related_code` still use new-side line numbers; only the \
+narration text itself is hands-off.
 """
 
 
@@ -148,29 +152,15 @@ range is 0 to {len(diff) - 1}.
 def format_hunk_for_narration(hunk: Hunk) -> str:
     """Render one Hunk for the narration context block.
 
-    Prefixes each diff line with `L<new-side line number>` so the LLM picks
-    line numbers it has literally seen rather than computing them by
-    arithmetic — historically the source of off-by-N anchor mistakes.
-
-    - "+" and " " (context) lines get the new-side number.
-    - "-" lines get `L----` — the deleted text has no new-side line, and
-      anchors only live on the new side anyway, so they're not pickable.
+    Plain diff form — `+`/`-`/` ` markers + content. Historically this
+    prefixed each line with `L<new-side line number>` so the model could
+    cite anchors verbatim, but the model no longer picks line numbers —
+    a separate anchor pass handles that, and giving the model numbers
+    here just tempts it to mention them in the prose (which the prompt
+    explicitly forbids).
     """
     lines = [f"### {hunk.file}  {hunk.header}"]
-    new_line = hunk.new_range[0] or 1
-    for raw in hunk.body.splitlines():
-        if not raw:
-            lines.append(raw)
-            continue
-        marker = raw[0]
-        if marker == "+":
-            lines.append(f"L{new_line:>4}  {raw}")
-            new_line += 1
-        elif marker == "-":
-            lines.append(f"L----  {raw}")
-        else:  # space / context
-            lines.append(f"L{new_line:>4}  {raw}")
-            new_line += 1
+    lines.extend(hunk.body.splitlines())
     return "\n".join(lines)
 
 
@@ -214,13 +204,9 @@ NARRATION DEPTH: highlights
 The reviewer is broadly familiar with the change already and wants only \
 the high-impact moments. Cut orienting context. Be ruthless about \
 trimming anything that's description, transition, or summary. Aim for \
-2-3 dense segments; one of them can be a single sentence if that's \
-where the substance lives. Every segment must still carry an `anchor` \
-pointing at the specific lines the highlight is about — that's how the \
-UI shows the reviewer where to look. The standard "omit anchor for \
-intros/transitions" carve-out does NOT apply here: at this depth there \
-are no intros or transitions, only the substance, and the substance is \
-always at specific lines.\
+2-3 dense body sentences; one can be a clause if that's where the \
+substance lives. Skip the `intro` field at this depth — at this density \
+there's nothing to frame, only substance.\
 """,
 }
 
@@ -279,14 +265,6 @@ def build_narrate_chunk_user_message(
             )
         related_text = "\nRELATED CODE (already retrieved)\n" + "\n".join(lines)
 
-    # File:line ranges available for anchoring (the chunk's hunks, new side).
-    anchorable = []
-    for h in chunk.hunks:
-        start = h.new_range[0]
-        end = h.new_range[0] + max(h.new_range[1] - 1, 0)
-        anchorable.append(f"{h.file} lines {start}-{end}")
-    anchor_hint = "\n".join(f"  • {a}" for a in anchorable)
-
     return f"""\
 Narrate chunk {chunk.chunk_id}: {chunk.summary}
 
@@ -294,14 +272,6 @@ CHUNK DIFF
 ----------
 {hunk_text}
 {related_text}
-
-ANCHORABLE LINE RANGES (use these as `anchor.line_range` values)
-{anchor_hint}
-
-Each line in the CHUNK DIFF above is prefixed with `L<nnn>` for added \
-or unchanged lines. Use those numbers exactly when you anchor — copy them, \
-don't compute them. Lines prefixed `L----` are deletions and can't be \
-anchored to (anchors live on the new side).
 
 AUDIENCE & VOICE
 ----------------
@@ -355,14 +325,14 @@ Open with whichever item gives the chunk its shape — usually (1) or (2) — \
 before walking into specifics. Don't narrate file order; narrate altitude, \
 high to low.
 
-CONCERNS GO INSIDE SEGMENTS, NOT AT THE END
+CONCERNS GO INSIDE THE BODY, NOT AT THE END
 -------------------------------------------
-When you reach lines a concern is about, voice it in the same segment ("…one \
-thing worth flagging here: …"). Phrase it the way a reviewer would — a \
-question, not a critique. Also emit the same item in the `concerns` field \
-below for the side-panel + post-to-PR workflow. No separate "concerns rundown" \
-segment at the end; if a concern isn't worth voicing where the code is, it \
-isn't worth tracking.
+When you reach the code a concern is about, voice it inline ("…one thing \
+worth flagging here: …"). Phrase it the way a reviewer would — a question, \
+not a critique. Also emit the same item in the `concerns` field below for \
+the side-panel + post-to-PR workflow. No separate "concerns rundown" \
+paragraph at the end; if a concern isn't worth voicing where the code is, \
+it isn't worth tracking.
 
 WRITE FOR THE EAR
 -----------------
@@ -388,24 +358,35 @@ character-by-character or awkwardly. Spell it out only when necessary.
 
 OUTPUT
 ------
-segments: An ORDERED list of 2-5 narration segments (see WHAT TO SAY for what \
-each should be about; bias toward fewer, denser segments).
+intro: OPTIONAL. One short paragraph — 1-2 sentences — of orientation that \
+doesn't point at specific lines. Use it for whole-file or whole-chunk framing \
+the reviewer needs BEFORE diving in: "this file is the new entry point for \
+the auth flow"; "the whole class is being rewritten as a dataclass"; "this \
+is dead code being removed wholesale". Plays first, with no diff highlight, \
+so the framing lands before lines start lighting up. Set to null when there's \
+no framing of that nature to add. Don't reach for an intro — most chunks \
+don't need one. NEVER use intro as a "here's what I'm about to say" preamble \
+to the body; if it could be the first sentence of body instead, it should be.
 
-  - Each segment optionally carries an `anchor`. When set, the UI highlights \
-and scrolls to those lines while the segment plays.
-  - line_range is [start, end] inclusive, on the new (post-change) side, \
-chosen from the ANCHORABLE LINE RANGES above. Keep anchors tight to what \
-you're actually talking about (1-15 lines is typical; whole hunks rarely).
-  - Omit `anchor` only for: a one-sentence orienting intro, a transition, \
-or a genuine cross-file observation. Most segments should be anchored.
+body: REQUIRED. The walkthrough prose itself. Aim for 2-5 substantive points \
+of WHAT TO SAY content, written as flowing paragraphs (3-8 sentences total). \
+A downstream pass automatically attaches each sentence to the lines it's \
+about and drives the diff highlight, so:
+
+  - DON'T spell out line numbers or file paths in body prose. Say what the \
+code does, not where it lives.
+  - DO let the topic move naturally between hunks; the highlight will follow \
+your sentences.
+  - DO keep sentences focused — one concrete point each. The auto-anchor \
+pass works best when each sentence is clearly about one piece of code.
 
 related_code: Include the provided related-code snippets if genuinely \
 relevant. Don't invent snippets — only use what was provided. Set \
 relationship to one of: definition, callsite, test, prior_version, sibling.
 
-concerns: 0-3 items. Mirror of the concerns you voiced inside segments; \
+concerns: 0-3 items. Mirror of the concerns you voiced inside body; \
 `suggested_question` is the ready-to-post PR comment wording. Don't add \
-concerns here that weren't also mentioned in a segment.
+concerns here that weren't also mentioned in body.
 
 look_closer_for: 0-3 short strings — quieter signals the reviewer should \
 re-check during careful reading (e.g. "schema migration not in this PR", \

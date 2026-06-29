@@ -52,6 +52,7 @@ from contracts.schemas import (
     FollowUp,
     FollowUpAnswer,
     Hunk,
+    NarrationSegment,
     PRMetadata,
     RelatedCode,
     TourChunk,
@@ -233,40 +234,43 @@ PLAN_TOUR_TOOL = {
     },
 }
 
-# Guided-tour segment: a few-sentence chunk of narration plus an optional
-# anchor that the UI uses to highlight + scroll the diff while the segment
-# is being spoken.
-_NARRATION_SEGMENT_SCHEMA = {
-    "type": "object",
-    "properties": {
-        "text": {"type": "string"},
-        "anchor": {"anyOf": [_CODE_ANCHOR_SCHEMA, {"type": "null"}]},
-    },
-    "required": ["text"],
-    "additionalProperties": False,
-}
-
 NARRATE_CHUNK_TOOL = {
     "name": "emit_chunk_narration",
     "description": (
-        "Emit the narration for one chunk as a guided walkthrough. The reviewer "
-        "hears segments in order; each anchored segment makes the UI highlight "
-        "and scroll to those lines while it plays."
+        "Emit the narration for one chunk as a guided walkthrough. The "
+        "narration has two sections: an optional `intro` for whole-file "
+        "or big-picture commentary that doesn't map to specific lines, "
+        "and a required `body` that walks through the diff. A separate "
+        "downstream pass assigns line anchors to each sentence of `body` "
+        "and drives the UI highlight — you do NOT pick line numbers."
     ),
     "input_schema": {
         "type": "object",
         "properties": {
             "chunk_id": {"type": "string"},
-            "segments": {
-                "type": "array",
-                "items": _NARRATION_SEGMENT_SCHEMA,
-                "minItems": 1,
+            "intro": {
+                "anyOf": [{"type": "string"}, {"type": "null"}],
                 "description": (
-                    "Ordered narration. Aim for 3-6 segments per chunk; most "
-                    "narrations need 3-4. Most segments should be anchored to "
-                    "specific lines within the chunk's hunks. Reserve unanchored "
-                    "segments for one orienting intro, transitions, or genuinely "
-                    "big-picture observations."
+                    "Optional. One short paragraph (1-2 sentences) of "
+                    "whole-file or whole-chunk orientation — the kind of "
+                    "thing that doesn't pin to specific lines. Examples: "
+                    "'this file is the new entry point for the auth flow', "
+                    "'the whole class is being rewritten as a dataclass', "
+                    "'this is dead code being removed wholesale'. Plays "
+                    "first with no diff highlight, so the reviewer hears "
+                    "the framing before lines start lighting up. Set to "
+                    "null if there's nothing of that nature to say."
+                ),
+            },
+            "body": {
+                "type": "string",
+                "description": (
+                    "Required. The walkthrough prose: what the diff changes "
+                    "and why, in spoken-paragraph form. Every sentence will "
+                    "be auto-anchored to specific diff lines and highlighted "
+                    "in the UI as it plays, so DON'T spell out line numbers "
+                    "or file paths in the prose — say what the code does, "
+                    "not where it sits."
                 ),
             },
             "related_code": {"type": "array", "items": _RELATED_CODE_SCHEMA},
@@ -274,7 +278,8 @@ NARRATE_CHUNK_TOOL = {
             "look_closer_for": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
-            "chunk_id", "segments", "related_code", "concerns", "look_closer_for",
+            "chunk_id", "intro", "body",
+            "related_code", "concerns", "look_closer_for",
         ],
         "additionalProperties": False,
     },
@@ -316,6 +321,11 @@ class ClaudeLLMAdapter:
     narrate_model:
         Model used for narrate_chunk and answer_follow_up. Defaults to
         claude-sonnet-4-6 (fast, supports streaming, excellent structured output).
+    anchor_model:
+        Model used for the second-pass anchor assignment that runs after
+        every narration. Defaults to sonnet (best quality/cost trade-off
+        per the eval — see scripts/eval_anchor_pass.py). Override to
+        haiku for ~3× speed + cost savings if anchor precision is OK.
     """
 
     def __init__(
@@ -323,10 +333,12 @@ class ClaudeLLMAdapter:
         api_key: str | None = None,
         plan_model: str = "claude-opus-4-7",
         narrate_model: str = "claude-sonnet-4-6",
+        anchor_model: str = "claude-sonnet-4-6",
     ) -> None:
         self._client = anthropic.AsyncAnthropic(api_key=api_key)
         self._plan_model = plan_model
         self._narrate_model = narrate_model
+        self._anchor_model = anchor_model
 
     # ------------------------------------------------------------------
     # plan_tour
@@ -441,8 +453,7 @@ class ClaudeLLMAdapter:
         )
 
         raw = self._extract_tool_input(response, "emit_chunk_narration")
-        result = self._parse_chunk_narration(raw)
-        return _snap_anchors_to_chunk_hunks(result, chunk)
+        return await self._compose_narration_from_tool_output(raw, chunk)
 
     # ------------------------------------------------------------------
     # narrate_chunk_streaming
@@ -485,14 +496,20 @@ class ClaudeLLMAdapter:
         result_holder: list[ChunkNarration] = []
 
         async def _token_stream() -> AsyncIterator[str]:
-            """Yields decoded narration tokens from the streaming response."""
-            accumulated_json = ""
-            in_narration = False
-            narration_chars: list[str] = []
-            # Buffer to detect "narration": " prefix in the JSON stream
+            """Yields decoded narration tokens from the streaming response.
+
+            We stream the `body` field (and prepend the `intro` field
+            once seen). The anchor pass runs after the LLM stream
+            finishes, so the visible streaming text is just the prose;
+            the segments + anchors are composed below before the
+            wrapper's get_result() returns.
+            """
+            in_field = False
             prefix_buf = ""
-            NARRATION_KEY = '"narration": "'
-            NARRATION_KEY_ALT = '"narration":"'
+            field_chars: list[str] = []
+            # We surface body to the user. Intro arrives first in JSON
+            # order (per tool schema), so we emit it too once seen.
+            FIELD_KEYS = ('"intro": "', '"intro":"', '"body": "', '"body":"')
 
             async with self._client.messages.stream(
                 model=self._narrate_model,
@@ -518,38 +535,37 @@ class ClaudeLLMAdapter:
                         delta = event.delta
                         if hasattr(delta, "partial_json"):
                             chunk_json = delta.partial_json
-                            accumulated_json += chunk_json
 
-                            if not in_narration:
+                            if not in_field:
                                 prefix_buf += chunk_json
-                                # Check for narration key in buffered text
-                                for key in (NARRATION_KEY, NARRATION_KEY_ALT):
+                                for key in FIELD_KEYS:
                                     idx = prefix_buf.find(key)
                                     if idx != -1:
-                                        in_narration = True
-                                        # Emit everything after the key
+                                        in_field = True
                                         remainder = prefix_buf[idx + len(key):]
                                         decoded = _unescape_json_string_fragment(remainder)
                                         if decoded:
-                                            narration_chars.append(decoded)
+                                            field_chars.append(decoded)
                                             yield decoded
                                         prefix_buf = ""
                                         break
                             else:
-                                # We're inside the narration string — emit tokens
-                                # Stop if we hit the closing quote (unescaped)
-                                decoded, done = _extract_narration_fragment(chunk_json, narration_chars)
+                                decoded, done = _extract_narration_fragment(chunk_json, field_chars)
                                 if decoded:
-                                    narration_chars.append(decoded)
+                                    field_chars.append(decoded)
                                     yield decoded
                                 if done:
-                                    in_narration = False
+                                    in_field = False
+                                    # A spacer token between intro and body
+                                    # so the user-facing stream reads as
+                                    # one continuous paragraph.
+                                    yield " "
 
                 final_msg = await stream.get_final_message()
 
-            # Parse the full structured response
             raw = self._extract_tool_input(final_msg, "emit_chunk_narration")
-            result_holder.append(self._parse_chunk_narration(raw))
+            composed = await self._compose_narration_from_tool_output(raw, chunk)
+            result_holder.append(composed)
 
         gen = _token_stream()
         return _StreamWrapper(gen, result_holder)
@@ -806,36 +822,66 @@ class ClaudeLLMAdapter:
             f"Content blocks: {[b.type for b in response.content]}"
         )
 
-    @staticmethod
-    def _parse_chunk_narration(raw: dict) -> ChunkNarration:
-        """Validate and return a ChunkNarration from a raw tool input dict.
+    async def _compose_narration_from_tool_output(
+        self, raw: dict, chunk: TourChunk,
+    ) -> ChunkNarration:
+        """Turn the {intro, body, …} tool output into a final ChunkNarration.
 
-        The LLM now emits `segments` instead of a single `narration` string;
-        derive `narration` here (joined for transcript/display) so the rest
-        of the pipeline still has the plain-prose field it expects.
-
-        Also coerces a few common LLM-produced shape quirks:
-          - line_range emitted as [n] (single line) → [n, n]
-          - line_range emitted as a single int → [n, n]
+        Two-phase: first validate the side-panel fields (related_code,
+        concerns, look_closer_for) into a partial ChunkNarration; then
+        run the anchor pass on `body` to produce anchored segments;
+        finally prepend a single unanchored intro segment if intro is
+        set, and concatenate intro + body for the `narration` text.
         """
-        # Concat segments → narration
-        if "narration" not in raw and isinstance(raw.get("segments"), list):
-            raw = {
-                **raw,
-                "narration": " ".join(
-                    s.get("text", "").strip()
-                    for s in raw["segments"]
-                    if isinstance(s, dict)
-                ),
-            }
-        # Coerce malformed anchors anywhere in the payload
+        from .anchor_pass import anchor_body_text
+
+        intro = raw.get("intro") or None
+        body = raw.get("body") or ""
+        if not body.strip():
+            raise ValueError(
+                "emit_chunk_narration produced no `body` — narration cannot "
+                f"be empty. Raw payload: {json.dumps(raw, indent=2)}"
+            )
+        # Defensive: chunk_id, related_code, concerns, look_closer_for
+        # still validate via Pydantic. Coerce stray anchor shapes on
+        # concerns/related_code (the LLM still picks those by hand).
         _coerce_anchors(raw)
         try:
-            return ChunkNarration.model_validate(raw)
+            shell = ChunkNarration.model_validate({
+                "chunk_id": raw.get("chunk_id", chunk.chunk_id),
+                "narration": "",  # filled below once segments are known
+                "intro": intro,
+                "segments": [],
+                "related_code": raw.get("related_code", []),
+                "concerns": raw.get("concerns", []),
+                "look_closer_for": raw.get("look_closer_for", []),
+            })
         except ValidationError as e:
             raise ValueError(
                 f"ChunkNarration schema mismatch:\n{e}\n\nRaw: {json.dumps(raw, indent=2)}"
             ) from e
+
+        body_segments, metrics = await anchor_body_text(
+            body, chunk, self._client, self._anchor_model,
+        )
+        log.info(
+            "anchor pass: chunk=%s model=%s %d sentences → %d segments "
+            "(%d ms, %d in / %d out tok)",
+            chunk.chunk_id, metrics.model, metrics.sentence_count,
+            metrics.segment_count, metrics.latency_ms,
+            metrics.input_tokens, metrics.output_tokens,
+        )
+
+        segments: list[NarrationSegment] = []
+        if intro:
+            segments.append(NarrationSegment(text=intro.strip(), anchor=None))
+        segments.extend(body_segments)
+
+        narration_text = " ".join(s.text for s in segments)
+        return shell.model_copy(update={
+            "narration": narration_text,
+            "segments": segments,
+        })
 
     @staticmethod
     def _make_session_id(pr: PRMetadata) -> str:
@@ -847,72 +893,6 @@ class ClaudeLLMAdapter:
 # ---------------------------------------------------------------------------
 # Streaming helpers
 # ---------------------------------------------------------------------------
-
-def _snap_anchors_to_chunk_hunks(
-    narration: ChunkNarration, chunk: TourChunk
-) -> ChunkNarration:
-    """Validate each segment anchor and snap drift to the nearest real hunk range.
-
-    The line-numbered prompt makes anchors land correctly most of the time, but
-    the model still occasionally emits a range that's slightly off (a stray
-    off-by-one or a range that pokes outside the actual hunk). For each segment
-    anchor we check:
-
-      1. Does the file appear in *this* chunk's hunks? If not, drop the anchor
-         — the model picked a file that doesn't belong to this chunk.
-      2. Does the line range overlap any hunk's new-side range? If yes, leave
-         it alone.
-      3. If not, snap to the nearest hunk (by absolute distance from the
-         anchor's start line). This catches the common "anchored 2 lines
-         above the hunk" case without changing the intent.
-
-    Concern anchors get the same treatment.
-    """
-    # Build {file: [(start, end), ...]} for this chunk's hunks (new-side)
-    hunk_ranges: dict[str, list[tuple[int, int]]] = {}
-    for h in chunk.hunks:
-        start = h.new_range[0]
-        end = h.new_range[0] + max(h.new_range[1] - 1, 0)
-        hunk_ranges.setdefault(h.file, []).append((start, end))
-
-    def snap(anchor: CodeAnchor | None) -> CodeAnchor | None:
-        if anchor is None:
-            return None
-        ranges = hunk_ranges.get(anchor.file)
-        if not ranges:
-            # File isn't in this chunk — drop the anchor rather than mislead the UI
-            return None
-        a_start, a_end = anchor.line_range
-        # Already overlaps a real hunk? Leave alone.
-        if any(rs <= a_end and re >= a_start for rs, re in ranges):
-            return anchor
-        # Snap to the hunk whose interval is nearest the anchor's interval.
-        # Use *gap* distance (0 if they touch, else the line count between
-        # the closest edges) rather than start-line distance — otherwise an
-        # anchor like (100,105) between hunks (10,20) and (200,210) snaps to
-        # the wrong hunk because the start-distance heuristic ignores edge
-        # proximity.
-        def gap(r: tuple[int, int]) -> int:
-            rs, re = r
-            return max(0, rs - a_end, a_start - re)
-        nearest = min(ranges, key=gap)
-        # Preserve the relative span of the anchor but clamp inside the hunk
-        span = max(0, a_end - a_start)
-        new_start = max(nearest[0], min(nearest[1], a_start))
-        new_end = min(nearest[1], new_start + span)
-        return CodeAnchor(file=anchor.file, line_range=(new_start, new_end))
-
-    new_segments = [
-        s.model_copy(update={"anchor": snap(s.anchor)}) for s in narration.segments
-    ]
-    new_concerns = [
-        c.model_copy(update={"anchor": snap(c.anchor)}) for c in narration.concerns
-    ]
-    return narration.model_copy(update={
-        "segments": new_segments,
-        "concerns": new_concerns,
-    })
-
 
 def _coerce_anchors(node: Any) -> None:
     """Walk a dict/list tree and fix anchor.line_range shape quirks in place.

@@ -160,15 +160,27 @@ class ChunkNarration(BaseModel):
     narration: str = Field(
         ...,
         description=(
-            "The full spoken script. Plain prose; TTS-friendly. When `segments` "
-            "is non-empty this is just the concatenation for transcript/display."
+            "The full spoken script (intro + body, joined). Plain prose; "
+            "TTS-friendly. This is just the concatenation of segments for "
+            "transcript/display."
+        ),
+    )
+    intro: str | None = Field(
+        default=None,
+        description=(
+            "Optional whole-file / big-picture orientation that doesn't map to "
+            "specific lines (e.g. 'this is the entry point for the auth flow'). "
+            "Played first; surfaced in segments as a single unanchored segment "
+            "at index 0. At most one per chunk."
         ),
     )
     segments: list[NarrationSegment] = Field(
         default_factory=list,
         description=(
-            "Optional ordered narration segments. When present, the player can "
-            "guide the diff (highlight + scroll) per segment as audio plays."
+            "Ordered narration segments. The first segment is the intro (if any) "
+            "and carries no anchor; every subsequent segment is body and anchors "
+            "to specific diff lines. The player drives diff highlight + scroll "
+            "from each segment's anchor as the audio plays."
         ),
     )
     segment_offsets_ms: list[int] = Field(

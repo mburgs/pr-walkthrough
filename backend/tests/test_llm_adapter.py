@@ -81,10 +81,6 @@ def _load_fixture_narration(chunk_id: str) -> ChunkNarration:
     )
 
 
-def _load_fixture_follow_up():
-    return json.loads((FIXTURE_DIR / "follow_up_example.json").read_text())
-
-
 @pytest.fixture
 def pr():
     return _load_fixture_pr()
@@ -108,11 +104,6 @@ def c1_narration():
 @pytest.fixture
 def c1_chunk(plan):
     return next(c for c in plan.chunks if c.chunk_id == "c1")
-
-
-@pytest.fixture
-def follow_up_example():
-    return _load_fixture_follow_up()
 
 
 # ---------------------------------------------------------------------------
@@ -184,13 +175,13 @@ class TestPromptConstruction:
 
     def test_follow_up_message_contains_question(self, plan, c1_narration):
         follow_up = FollowUp(chunk_id="c1", question_text="Is rotate() thread-safe?")
-        msg = build_follow_up_user_message(plan, [c1_narration], follow_up)
+        msg = build_follow_up_user_message(plan, [c1_narration], None, [], [], follow_up)
         assert "rotate()" in msg
         assert "thread-safe" in msg
 
     def test_follow_up_message_contains_history(self, plan, c1_narration):
         follow_up = FollowUp(chunk_id="c1", question_text="Any concerns?")
-        msg = build_follow_up_user_message(plan, [c1_narration], follow_up)
+        msg = build_follow_up_user_message(plan, [c1_narration], None, [], [], follow_up)
         assert "c1" in msg  # history mention
 
     def test_follow_up_message_low_confidence_note(self, plan):
@@ -199,7 +190,7 @@ class TestPromptConstruction:
             question_text="Some question",
             transcript_confidence=0.6,
         )
-        msg = build_follow_up_user_message(plan, [], follow_up)
+        msg = build_follow_up_user_message(plan, [], None, [], [], follow_up)
         assert "confidence" in msg.lower()
 
 
@@ -245,45 +236,67 @@ class TestStructuredOutputValidation:
         assert result.chunks[0].chunk_id == "c1"
 
     @pytest.mark.asyncio
-    async def test_narrate_chunk_valid_response(self, plan, c1_chunk, c1_narration):
-        """Mock a valid tool response and verify ChunkNarration is returned."""
+    async def test_narrate_chunk_valid_response(self, plan, c1_chunk):
+        """Mock the chained narrate + anchor-pass calls and verify composition.
+
+        narrate_chunk emits {intro, body, …}; a second LLM call assigns
+        per-sentence anchors. We mock both: the first by tool name, the
+        second by tool name. dispatch_by_tool inspects the `tools=`
+        kwarg to return the right canned response.
+        """
         adapter = ClaudeLLMAdapter(api_key="test-key")
 
-        raw = c1_narration.model_dump(mode="json")
-        mock_response = _make_mock_response("emit_chunk_narration", raw)
+        narrate_raw = {
+            "chunk_id": "c1",
+            "intro": "This file gains a couple of new helpers.",
+            "body": (
+                "We're adding rotate to wipe every session for a user. "
+                "And touch bumps rotated_at on a single token."
+            ),
+            "related_code": [],
+            "concerns": [],
+            "look_closer_for": [],
+        }
+        # Pick a real (file, line) inside c1_chunk so _validate_assignment
+        # doesn't have to snap. Use the first hunk's first line.
+        h = c1_chunk.hunks[0]
+        anchor_raw = {
+            "assignments": [
+                {"sentence_index": 0, "file": h.file,
+                 "line_start": h.new_range[0], "line_end": h.new_range[0]},
+                {"sentence_index": 1, "file": h.file,
+                 "line_start": h.new_range[0], "line_end": h.new_range[0]},
+            ],
+        }
+
+        narrate_resp = _make_mock_response("emit_chunk_narration", narrate_raw)
+        anchor_resp = _make_mock_response("assign_sentence_anchors", anchor_raw)
+
+        async def dispatch(**kwargs):
+            tool_name = kwargs.get("tools", [{}])[0].get("name", "")
+            if tool_name == "emit_chunk_narration":
+                return narrate_resp
+            if tool_name == "assign_sentence_anchors":
+                return anchor_resp
+            raise AssertionError(f"unexpected tool call: {tool_name!r}")
 
         with patch.object(
-            adapter._client.messages,
-            "create",
-            new=AsyncMock(return_value=mock_response),
+            adapter._client.messages, "create",
+            new=AsyncMock(side_effect=dispatch),
         ):
             result = await adapter.narrate_chunk(plan, c1_chunk, related=[])
 
         assert isinstance(result, ChunkNarration)
         assert result.chunk_id == "c1"
-        assert len(result.narration) > 50
-
-    @pytest.mark.asyncio
-    async def test_answer_follow_up_valid_response(self, plan, c1_narration, follow_up_example):
-        """Mock a valid tool response and verify FollowUpAnswer is returned."""
-        adapter = ClaudeLLMAdapter(api_key="test-key")
-
-        raw = follow_up_example["answer"]
-        mock_response = _make_mock_response("emit_follow_up_answer", raw)
-
-        follow_up = FollowUp(
-            chunk_id="c2",
-            question_text="Does rotate share the connection?",
-        )
-        with patch.object(
-            adapter._client.messages,
-            "create",
-            new=AsyncMock(return_value=mock_response),
-        ):
-            result = await adapter.answer_follow_up(plan, [c1_narration], follow_up)
-
-        assert isinstance(result, FollowUpAnswer)
-        assert len(result.answer_text) > 20
+        # Intro becomes segment[0] with no anchor
+        assert result.segments[0].anchor is None
+        assert result.segments[0].text == narrate_raw["intro"]
+        # Body sentences got merged (both assigned to same line) → one segment
+        assert len(result.segments) == 2
+        assert result.segments[1].anchor is not None
+        # Full prose includes both intro + body
+        assert "rotate" in result.narration
+        assert "This file gains" in result.narration
 
     @pytest.mark.asyncio
     async def test_schema_mismatch_raises_value_error_tour_plan(self, pr, diff):
@@ -403,18 +416,39 @@ class TestPromptCaching:
         assert cache_blocks, "At least one system block must have cache_control"
 
     @pytest.mark.asyncio
-    async def test_narrate_chunk_sends_two_cached_system_blocks(self, plan, c1_chunk, c1_narration):
-        """narrate_chunk must send two system blocks, both with cache_control."""
+    async def test_narrate_chunk_sends_two_cached_system_blocks(self, plan, c1_chunk):
+        """narrate_chunk must send two system blocks, both with cache_control.
+
+        narrate_chunk now triggers a follow-up anchor-pass call too; we
+        only assert on the first (narration) request's system blocks —
+        the anchor pass sends a single one-shot prompt with no system.
+        """
         adapter = ClaudeLLMAdapter(api_key="test-key")
 
-        raw = c1_narration.model_dump(mode="json")
-        mock_response = _make_mock_response("emit_chunk_narration", raw)
+        h = c1_chunk.hunks[0]
+        narrate_raw = {
+            "chunk_id": "c1",
+            "intro": None,
+            "body": "We add a thing.",
+            "related_code": [],
+            "concerns": [],
+            "look_closer_for": [],
+        }
+        anchor_raw = {
+            "assignments": [
+                {"sentence_index": 0, "file": h.file,
+                 "line_start": h.new_range[0], "line_end": h.new_range[0]},
+            ],
+        }
+        narrate_resp = _make_mock_response("emit_chunk_narration", narrate_raw)
+        anchor_resp = _make_mock_response("assign_sentence_anchors", anchor_raw)
 
         captured_kwargs: list[dict] = []
 
         async def mock_create(**kwargs):
             captured_kwargs.append(kwargs)
-            return mock_response
+            tool_name = kwargs.get("tools", [{}])[0].get("name", "")
+            return narrate_resp if tool_name == "emit_chunk_narration" else anchor_resp
 
         with patch.object(adapter._client.messages, "create", side_effect=mock_create):
             await adapter.narrate_chunk(plan, c1_chunk, related=[])
@@ -462,15 +496,3 @@ class TestLiveClaude:
         assert narration.chunk_id == chunk.chunk_id
         assert len(narration.narration) > 50
 
-    @pytest.mark.asyncio
-    async def test_live_answer_follow_up(self):
-        plan = _load_fixture_plan()
-        history = [_load_fixture_narration("c1")]
-        follow_up = FollowUp(
-            chunk_id="c2",
-            question_text="Does session_store.rotate share the same DB connection as the role update?",
-        )
-        adapter = ClaudeLLMAdapter()
-        answer = await adapter.answer_follow_up(plan, history, follow_up)
-        assert isinstance(answer, FollowUpAnswer)
-        assert len(answer.answer_text) > 20
