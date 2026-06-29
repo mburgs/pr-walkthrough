@@ -639,7 +639,11 @@ class ClaudeLLMAdapter:
         async def _token_stream() -> AsyncIterator[str]:
             # Mutable conversation that the loop extends each turn.
             convo: list[dict[str, Any]] = list(messages)
-            MAX_ITERS = 5
+            # Bumped from 5 → 8 after a real session where the model
+            # spent 4 retrieval rounds on a thorough investigation and
+            # ran out before answering. 8 is generous without making
+            # runaway loops invisible.
+            MAX_ITERS = 8
             for iteration in range(MAX_ITERS):
                 # Per-turn state for streaming answer_text tokens.
                 # `current_tool` tracks which content block is being built
@@ -651,6 +655,15 @@ class ClaudeLLMAdapter:
                 ANSWER_KEY = '"answer_text": "'
                 ANSWER_KEY_ALT = '"answer_text":"'
 
+                # On the final iteration, FORCE the model to emit the
+                # answer — no more retrieval rounds available. Without
+                # this we'd hit the cap and raise; the model has no
+                # idea it's on its last turn otherwise.
+                if iteration == MAX_ITERS - 1:
+                    tool_choice = {"type": "tool", "name": "emit_follow_up_answer"}
+                else:
+                    tool_choice = {"type": "auto"}
+
                 async with self._client.messages.stream(
                     model=self._narrate_model,
                     max_tokens=4096,
@@ -660,6 +673,7 @@ class ClaudeLLMAdapter:
                         GREP_REPO_TOOL,
                         ANSWER_FOLLOW_UP_TOOL,
                     ],
+                    tool_choice=tool_choice,
                     messages=convo,
                 ) as stream:
                     async for event in stream:

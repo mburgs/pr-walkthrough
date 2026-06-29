@@ -173,14 +173,24 @@ async def post_follow_up(
                 yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
                 return
 
-            async for item in stream:
-                if isinstance(item, StreamToolCall):
-                    yield (
-                        "event: tool_call\n"
-                        f"data: {json.dumps({'name': item.name, 'summary': item.summary})}\n\n"
-                    )
-                else:
-                    yield f"event: token\ndata: {json.dumps({'text': item})}\n\n"
+            # Wrap the streaming loop so an exception mid-stream (e.g.
+            # the tool-loop cap hits, the LLM API blips) emits a clean
+            # SSE error frame instead of just dropping the connection
+            # — the browser would otherwise surface "TypeError: network
+            # error" with no context for the user.
+            try:
+                async for item in stream:
+                    if isinstance(item, StreamToolCall):
+                        yield (
+                            "event: tool_call\n"
+                            f"data: {json.dumps({'name': item.name, 'summary': item.summary})}\n\n"
+                        )
+                    else:
+                        yield f"event: token\ndata: {json.dumps({'text': item})}\n\n"
+            except Exception as e:
+                log.exception("follow-up streaming loop failed")
+                yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
+                return
 
             try:
                 answer = stream.get_result()
