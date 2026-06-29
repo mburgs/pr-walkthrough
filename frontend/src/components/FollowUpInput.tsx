@@ -35,6 +35,11 @@ import styles from "./FollowUpInput.module.css";
 
 type Phase = "transcribing" | "awaiting" | "streaming" | "complete" | "error";
 
+interface ToolCallEvent {
+  name: string;
+  summary: string;
+}
+
 interface Turn {
   id: string;
   question: string;
@@ -45,6 +50,8 @@ interface Turn {
   audioUrl: string | null;
   answerId: string | null;
   error: string | null;
+  /** Retrieval tool calls fired during this turn, in order. */
+  toolCalls: ToolCallEvent[];
 }
 
 const REVEAL_CHARS_PER_SEC = 90;
@@ -176,6 +183,19 @@ function TurnView({ turn }: { turn: Turn }) {
             </span>
           )}
         </div>
+        {turn.toolCalls.length > 0 && (
+          <ul className={styles.toolCalls} aria-label="Lookups performed">
+            {turn.toolCalls.map((tc, i) => (
+              <li key={i} className={styles.toolCall}>
+                <span className={styles.toolIcon} aria-hidden>
+                  {tc.name === "grep_repo" ? "🔍" : tc.name === "read_file_lines" ? "📄" : "🛠"}
+                </span>
+                <span className={styles.toolName}>{tc.name}</span>
+                <span className={styles.toolSummary}>{tc.summary}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         {turn.phase === "awaiting" && !displayed ? (
           <div className={styles.answerTextPlaceholder}>
             Waiting for the first token…
@@ -264,6 +284,7 @@ export default function FollowUpInput() {
       phase: blob ? "transcribing" : "awaiting",
       streamingText: "",
       answer: null, audioUrl: null, answerId: null, error: null,
+      toolCalls: [],
     });
 
     try {
@@ -276,6 +297,13 @@ export default function FollowUpInput() {
           // to waiting for the LLM. Empty text means STT found no
           // speech — render the placeholder rather than blank.
           updateTurn(id, { question: text, phase: "awaiting" });
+        },
+        onToolCall: (name, summary) => {
+          setTurns((prev) => prev.map((t) =>
+            t.id === id
+              ? { ...t, toolCalls: [...t.toolCalls, { name, summary }] }
+              : t
+          ));
         },
         onToken: (delta) => {
           setTurns((prev) => prev.map((t) =>

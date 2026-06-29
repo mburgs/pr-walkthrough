@@ -38,6 +38,7 @@ from __future__ import annotations
 import json
 import logging
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -745,8 +746,14 @@ class ClaudeLLMAdapter:
                 convo.append({"role": "assistant", "content": final_msg.content})
                 tool_results: list[dict[str, Any]] = []
                 for use in retrieval_uses:
+                    args = dict(use.input)
+                    # Surface to the SSE consumer first so the UI can
+                    # show "🔍 looking up X…" before the tool actually
+                    # blocks. Summary is best-effort: small enough to
+                    # render inline, descriptive enough to read.
+                    yield StreamToolCall(name=use.name, summary=_summarize_tool_args(use.name, args))
                     try:
-                        out = execute_tool(use.name, dict(use.input), repo_root)
+                        out = execute_tool(use.name, args, repo_root)
                     except Exception as e:  # defensive — execute_tool catches its own
                         log.exception("retrieval tool %s raised", use.name)
                         out = f"ERROR: {e}"
@@ -1003,21 +1010,63 @@ class _StreamWrapper:
         return self._result_holder[0]
 
 
+def _summarize_tool_args(name: str, args: dict) -> str:
+    """One-line human-readable summary of a retrieval tool call, for
+    display in the chat UI. Truncates long strings so a giant regex
+    or 200-line read range stays readable."""
+    def _trim(s: str, n: int = 80) -> str:
+        s = str(s)
+        return s if len(s) <= n else s[: n - 1] + "…"
+    if name == "read_file_lines":
+        path = _trim(args.get("path", "?"))
+        return f"{path}:{args.get('start', '?')}-{args.get('end', '?')}"
+    if name == "grep_repo":
+        bits = [f"pattern={_trim(args.get('pattern', '?'))!r}"]
+        if args.get("path_glob"):
+            bits.append(f"glob={_trim(args['path_glob'])!r}")
+        return " ".join(bits)
+    # Fallback for tools we don't have a custom format for
+    return ", ".join(f"{k}={_trim(v, 40)!r}" for k, v in args.items())
+
+
+@dataclass(frozen=True)
+class StreamToolCall:
+    """Sentinel yielded by `_FollowUpStream` immediately before a
+    retrieval tool runs.
+
+    The route turns this into an SSE `event: tool_call` frame so the
+    UI can show a "looking up X…" line while the model gathers more
+    context. `summary` is a short human-readable rendering of the
+    tool's args (e.g. ``pattern='session_store'``).
+    """
+    name: str
+    summary: str
+
+
 class _FollowUpStream:
-    """Mirror of `_StreamWrapper` for follow-up answers. Same shape:
-    async iterator of decoded text characters from the streaming
-    `answer_text` JSON field, plus `.get_result()` for the structured
-    `FollowUpAnswer` after the iterator is exhausted.
+    """Mirror of `_StreamWrapper` for follow-up answers. The iterator
+    yields either:
+
+      - ``str``  — a decoded fragment of the answer_text JSON value
+      - ``StreamToolCall`` — about to execute a retrieval tool
+
+    The caller (the SSE route) inspects each item's type and emits
+    the appropriate frame. `.get_result()` returns the structured
+    FollowUpAnswer after the iterator is exhausted.
     """
 
-    def __init__(self, gen: AsyncIterator[str], result_holder: list[FollowUpAnswer]) -> None:
+    def __init__(
+        self,
+        gen: AsyncIterator["str | StreamToolCall"],
+        result_holder: list[FollowUpAnswer],
+    ) -> None:
         self._gen = gen
         self._result_holder = result_holder
 
-    def __aiter__(self) -> AsyncIterator[str]:
+    def __aiter__(self) -> AsyncIterator["str | StreamToolCall"]:
         return self._gen
 
-    async def __anext__(self) -> str:
+    async def __anext__(self) -> "str | StreamToolCall":
         return await self._gen.__anext__()  # type: ignore[attr-defined]
 
     def get_result(self) -> FollowUpAnswer:

@@ -119,6 +119,9 @@ export interface FollowUpStreamCallbacks {
   onTranscribing?: () => void;
   /** Voice path only: STT finished; `text` is what the model heard. */
   onTranscribed?: (text: string, confidence: number | null) => void;
+  /** The model is about to run a retrieval tool (read_file_lines /
+   * grep_repo). `summary` is a short human-readable arg digest. */
+  onToolCall?: (name: string, summary: string) => void;
 }
 
 /**
@@ -185,6 +188,11 @@ export async function submitFollowUp(
         try {
           const payload = JSON.parse(data) as { text?: string; confidence?: number | null };
           callbacks.onTranscribed?.(payload.text ?? "", payload.confidence ?? null);
+        } catch { /* skip malformed */ }
+      } else if (event === "tool_call") {
+        try {
+          const payload = JSON.parse(data) as { name?: string; summary?: string };
+          callbacks.onToolCall?.(payload.name ?? "?", payload.summary ?? "");
         } catch { /* skip malformed */ }
       } else if (event === "token") {
         try {

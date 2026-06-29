@@ -161,6 +161,10 @@ export const handlers = [
           await new Promise((r) => setTimeout(r, 50));
           enqueue("question", { text: "What does this PR change?", confidence: 0.95 });
         }
+        // Demo a retrieval tool call so the UI's tool-call list
+        // renders in screenshot/playwright runs.
+        enqueue("tool_call", { name: "grep_repo", summary: "pattern='session_store'" });
+        await new Promise((r) => setTimeout(r, 30));
         const text = answer.answer_text;
         const stride = Math.max(1, Math.ceil(text.length / 8));
         for (let i = 0; i < text.length; i += stride) {

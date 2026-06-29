@@ -8,6 +8,8 @@ the answer as it's generated. Event sequence:
                                                       STT in progress
   event: question      data: {"text": "...",          voice path only —
                               "confidence": 0.92}     transcribed input
+  event: tool_call     data: {"name": "...",          fires before each
+                              "summary": "..."}        retrieval tool runs
   event: token         data: {"text": "...delta..."}  one per partial-JSON
                                                       fragment of answer_text
   event: final         data: {"answer": {...},        fires as soon as the
@@ -36,6 +38,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
 from contracts.schemas import CodeAnchor, FollowUp
+from pr_walkthrough.llm.adapter import StreamToolCall
 from pr_walkthrough.orchestration import AppContext
 
 from .deps import get_app_context
@@ -170,8 +173,14 @@ async def post_follow_up(
                 yield f"event: error\ndata: {json.dumps({'message': str(e)})}\n\n"
                 return
 
-            async for token in stream:
-                yield f"event: token\ndata: {json.dumps({'text': token})}\n\n"
+            async for item in stream:
+                if isinstance(item, StreamToolCall):
+                    yield (
+                        "event: tool_call\n"
+                        f"data: {json.dumps({'name': item.name, 'summary': item.summary})}\n\n"
+                    )
+                else:
+                    yield f"event: token\ndata: {json.dumps({'text': item})}\n\n"
 
             try:
                 answer = stream.get_result()
