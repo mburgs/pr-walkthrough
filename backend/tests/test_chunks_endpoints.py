@@ -179,7 +179,7 @@ class TestRepoFile:
     """GET /sessions/{sid}/files?path= — full file contents for the related-code modal."""
 
     def test_returns_file_contents(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
-        in_memory_ctx.repo_root = tmp_path
+        in_memory_ctx.repo_root_for = lambda plan: tmp_path
         (tmp_path / "src").mkdir()
         (tmp_path / "src" / "foo.py").write_text("def foo():\n    return 1\n", encoding="utf-8")
         sid = _create_session(client)
@@ -190,13 +190,13 @@ class TestRepoFile:
         assert "def foo()" in body["content"]
 
     def test_rejects_path_traversal(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
-        in_memory_ctx.repo_root = tmp_path
+        in_memory_ctx.repo_root_for = lambda plan: tmp_path
         sid = _create_session(client)
         resp = client.get(f"/sessions/{sid}/files", params={"path": "../etc/passwd"})
         assert resp.status_code == 400
 
     def test_404_on_missing_file(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
-        in_memory_ctx.repo_root = tmp_path
+        in_memory_ctx.repo_root_for = lambda plan: tmp_path
         sid = _create_session(client)
         resp = client.get(f"/sessions/{sid}/files", params={"path": "nope.py"})
         assert resp.status_code == 404
@@ -206,7 +206,7 @@ class TestRepoFile:
         assert resp.status_code == 404
 
     def test_rejects_dotfile_paths(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
-        in_memory_ctx.repo_root = tmp_path
+        in_memory_ctx.repo_root_for = lambda plan: tmp_path
         (tmp_path / ".git").mkdir()
         (tmp_path / ".git" / "config").write_text("[user]\n", encoding="utf-8")
         (tmp_path / ".env").write_text("SECRET=1\n", encoding="utf-8")
@@ -216,7 +216,7 @@ class TestRepoFile:
             assert resp.status_code == 400, p
 
     def test_rejects_oversize_file(self, client: TestClient, in_memory_ctx, tmp_path) -> None:
-        in_memory_ctx.repo_root = tmp_path
+        in_memory_ctx.repo_root_for = lambda plan: tmp_path
         big = tmp_path / "huge.txt"
         big.write_bytes(b"x" * 1_100_000)
         sid = _create_session(client)

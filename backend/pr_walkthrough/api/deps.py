@@ -23,11 +23,17 @@ def get_app_context() -> "AppContext":
         from pathlib import Path
         from pr_walkthrough.orchestration import AppContext
 
-        # Allow the user to point context retrieval at a cloned repo without
-        # having to edit code. Useful when running the demo against a real PR
-        # whose codebase sits outside the orchestrator's own cwd.
-        repo_root = Path(os.environ.get("PR_WALKTHROUGH_REPO_ROOT", "."))
-        _app_context = AppContext(repo_root=repo_root)
+        # Parent directory holding repo checkouts as subdirs. Defaults to
+        # ~/code; override via PR_WALKTHROUGH_REPOS_DIR. The active repo
+        # for a session is resolved per-PR from the URL slug — one backend
+        # process can walk PRs from any repo under this parent dir.
+        repos_dir = Path(
+            os.environ.get(
+                "PR_WALKTHROUGH_REPOS_DIR",
+                str(Path.home() / "code"),
+            )
+        ).expanduser()
+        _app_context = AppContext(repos_dir=repos_dir)
     return _app_context
 
 

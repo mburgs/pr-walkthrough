@@ -40,7 +40,7 @@ class AppContext:
         store: SessionStore | None = None,
         tts_registry: object | None = None,
         db_path: str | Path = "sessions.db",
-        repo_root: Path = Path("."),
+        repos_dir: Path = Path.home() / "code",
     ) -> None:
         # Import fakes lazily so real adapters can be passed without importing fakes
         if llm is None:
@@ -110,7 +110,11 @@ class AppContext:
         self.pr_source: PRSource = pr_source
         self.context: ContextRetriever = context_retriever
         self.store: SessionStore = store
-        self.repo_root: Path = Path(repo_root)
+        # Parent directory holding repo checkouts as subdirs (e.g. ~/code).
+        # The active repo for a session is resolved per-request via
+        # `repo_root_for(plan)` below, since one running backend can walk
+        # PRs from any number of repos that share a common parent dir.
+        self.repos_dir: Path = Path(repos_dir).expanduser()
 
         # Multi-engine registry for the audio-variants A/B endpoint. Lazy:
         # engines are instantiated on first request, not at startup. Tests
@@ -139,3 +143,20 @@ class AppContext:
             "PR_WALKTHROUGH_{TTS,LLM}_CONCURRENCY)",
             self.tts_concurrency, self.llm_concurrency,
         )
+
+    def repo_root_for(self, plan) -> Path:
+        """Resolve the on-disk repo root for a given session's PR.
+
+        We hold a *parent* directory of repo checkouts (e.g. ~/code) so
+        one backend can walk PRs from any of the repos under it. The
+        repo name comes from the PR slug (plan.pr.repo = 'owner/name')
+        — we take the trailing name and join it under repos_dir. Falls
+        back to repos_dir itself if the checkout isn't present, which
+        lets the rest of the pipeline run (retrieval tools will return
+        not-found rather than crash).
+        """
+        if plan is None or plan.pr is None or not plan.pr.repo:
+            return self.repos_dir
+        name = plan.pr.repo.split("/")[-1]
+        candidate = self.repos_dir / name
+        return candidate if candidate.is_dir() else self.repos_dir

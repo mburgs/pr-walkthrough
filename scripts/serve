@@ -10,9 +10,11 @@
 # — so one shared venv is enough.
 #
 # Env knobs:
-#   PR_WALKTHROUGH_REPO_ROOT          target repo the PRs live in (jedi root)
-#                                     required — set to the absolute path
-#                                     of the repo you want to walk
+#   PR_WALKTHROUGH_REPOS_DIR          parent dir holding repo checkouts as
+#                                     subdirs (default ~/code). The active
+#                                     repo for a PR is derived from the URL
+#                                     slug, e.g. github.com/x/calsync/pull/6
+#                                     resolves to $REPOS_DIR/calsync.
 #   PR_WALKTHROUGH_PORT               pin the backend port (else auto-pick)
 #   PR_WALKTHROUGH_FRONTEND_PORT      pin the frontend port (else auto-pick)
 #   PR_WALKTHROUGH_TTS_CONCURRENCY    bump if the machine has headroom
@@ -76,16 +78,11 @@ export PR_WALKTHROUGH_ALLOWED_ORIGINS="http://localhost:$frontend_port,http://12
 # same origin, which trips MSW for fixture mode); pointing it at the
 # backend disables MSW and routes through to uvicorn.
 export VITE_BACKEND_URL="http://127.0.0.1:$backend_port"
-if [ -z "${PR_WALKTHROUGH_REPO_ROOT:-}" ]; then
-  cat >&2 <<'EOF'
-PR_WALKTHROUGH_REPO_ROOT is not set.
-
-Set it to the absolute path of the repo whose PRs you want to walk, e.g.:
-  PR_WALKTHROUGH_REPO_ROOT=~/code/my-project ./scripts/serve
-EOF
-  exit 1
-fi
-export PR_WALKTHROUGH_REPO_ROOT
+# Parent dir holding repo checkouts; defaults to ~/code. The backend
+# resolves the active repo from each PR's URL slug (e.g. calsync/pull/6
+# → $REPOS_DIR/calsync) so one process can walk PRs across any of the
+# repos under this parent dir without restart.
+export PR_WALKTHROUGH_REPOS_DIR="${PR_WALKTHROUGH_REPOS_DIR:-$HOME/code}"
 # contracts/ sits at the repo root (sibling of backend/) — both have to
 # be importable for the editable install + the `from contracts.*` imports.
 export PYTHONPATH="$repo_root:$repo_root/backend${PYTHONPATH:+:$PYTHONPATH}"
@@ -102,7 +99,7 @@ if [ ! -x "$fe_dir/node_modules/.bin/vite" ]; then
 fi
 
 echo "→ venv:       $venv"
-echo "→ repo root:  $PR_WALKTHROUGH_REPO_ROOT"
+echo "→ repos dir:  $PR_WALKTHROUGH_REPOS_DIR  (per-PR repo resolved from URL slug)"
 echo "→ backend:    http://127.0.0.1:$backend_port"
 echo "→ frontend:   http://localhost:$frontend_port  ← open this in your browser"
 echo

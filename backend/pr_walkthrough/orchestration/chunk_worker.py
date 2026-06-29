@@ -105,7 +105,7 @@ async def process_chunk(
             h = chunk.hunks[0]
             anchor = CodeAnchor(file=h.file, line_range=(h.new_range[0], h.new_range[0]))
             try:
-                related = await ctx.context.related(anchor, ctx.repo_root)
+                related = await ctx.context.related(anchor, ctx.repo_root_for(plan))
             except Exception:
                 log.warning("context retrieval failed for %s", chunk.chunk_id, exc_info=True)
 

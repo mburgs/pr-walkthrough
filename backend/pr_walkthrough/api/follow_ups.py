@@ -89,12 +89,13 @@ async def post_follow_up(
         (c for c in state.plan.chunks if c.chunk_id == state.current_chunk_id),
         None,
     )
+    repo_root = ctx.repo_root_for(state.plan)
     related_for_current: list = []
     if current_chunk and current_chunk.hunks:
         h = current_chunk.hunks[0]
         anchor = CodeAnchor(file=h.file, line_range=(h.new_range[0], h.new_range[0]))
         try:
-            related_for_current = await ctx.context.related(anchor, ctx.repo_root)
+            related_for_current = await ctx.context.related(anchor, repo_root)
         except Exception:
             log.warning("related-code lookup failed for follow-up", exc_info=True)
 
@@ -165,7 +166,7 @@ async def post_follow_up(
                     related_for_current=related_for_current,
                     flags=flags,
                     diff_context=diff_context,
-                    repo_root=ctx.repo_root,
+                    repo_root=repo_root,
                     follow_up=follow_up,
                 )
             except Exception as e:

@@ -119,8 +119,8 @@ async def get_repo_file(
     Path is resolved relative to the configured repo_root and must stay
     inside it — straightforward path-traversal guard.
     """
-    _ensure_session(sid, ctx)
-    root = ctx.repo_root.resolve()
+    state = _ensure_session(sid, ctx)
+    root = ctx.repo_root_for(state.plan).resolve()
     target = (root / path).resolve()
     try:
         rel = target.relative_to(root)
