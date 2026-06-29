@@ -21,6 +21,7 @@ from ._wav import (
     float32_to_pcm16,
     resample_pcm16,
 )
+from .text_normalize import normalize_for_tts
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ class KokoroTTSAdapter:
 
     async def _synth_iter(self, text: str, voice: str) -> AsyncIterator[bytes]:
         resolved_voice = _DEFAULT_VOICE if voice == "default" else voice
+        text = normalize_for_tts(text)
 
         def _run_kokoro() -> list[bytes]:
             """Run the synchronous kokoro pipeline and collect PCM chunks."""
@@ -138,6 +140,7 @@ class KokoroTTSAdapter:
         import numpy as np
 
         resolved_voice = _DEFAULT_VOICE if voice == "default" else voice
+        text = normalize_for_tts(text)
 
         def _run_kokoro() -> bytes:
             all_pcm = b""
