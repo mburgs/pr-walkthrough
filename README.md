@@ -1,130 +1,97 @@
 # pr-walkthrough
 
-A narrated, browser-based code-review companion for GitHub pull requests. Open a PR URL and an LLM walks you through the diff in a sensible order — speaking aloud, highlighting the lines it's discussing, surfacing related code, and capturing concerns you can post back as review comments.
+A narrated, browser-based walkthrough of a GitHub pull request.
+Hand it a PR ref; an LLM plans a tour of the diff and talks you
+through it — reading the relevant code aloud, highlighting the lines
+it's discussing, surfacing related code from the repo, and capturing
+concerns you can post back as review comments.
 
-The narrator follows a **tour plan** instead of file-order so the architectural shape of the change comes first; chunks are grouped by purpose (API surface · Mechanism · Tests · …) in the sidebar. Audio synthesis, transcription, and PR I/O all run locally — only the diff text leaves the machine, and only to Anthropic.
+Audio and transcription run locally. Only the diff text leaves the
+machine, and only to Anthropic.
 
-## Status
+## Install
 
-Working end-to-end. The PR demo flow (URL → plan → narrated tour with audio + diff highlighting + flag capture) is the canonical test. 110+ backend tests and 13 Playwright e2e tests cover the surface.
-
-## Stack
-
-| Layer | Choice |
-|-------|--------|
-| Backend | Python 3.11+, FastAPI, SQLite |
-| Frontend | Vite + React 19 + TypeScript |
-| Diff render | `react-diff-view` with refractor (Prism) tokens |
-| LLM | Claude (Sonnet) via `anthropic` SDK — planning + structured narration |
-| Cross-repo context | Jedi (Python static analysis) + ripgrep fallback |
-| TTS | Kokoro 82M (local, Apache-2.0) — also Piper and macOS `say` |
-| STT | Parakeet via MLX (push-to-talk follow-ups; Apple Silicon) |
-| PR I/O | `gh` CLI (uses your existing auth) |
-
-## Quickstart
-
-### Prerequisites
-
-- Python 3.11+
-- Node 20+
-- `gh` CLI, authenticated (`gh auth status`)
-- An Anthropic API key
-- macOS or Linux
-
-### Install
+Prereqs: Python 3.11+, Node 20+, `gh` authed, an Anthropic API key,
+macOS or Linux.
 
 ```bash
-# Backend (editable; also installs the shared `contracts` package from the repo root)
-cd backend
-python -m venv ../.venv && source ../.venv/bin/activate
-pip install -e . -e ..
-
-# Frontend
-cd ../frontend
-npm install
+git clone https://github.com/mburgs/pr-walkthrough && cd pr-walkthrough
+python -m venv .venv && source .venv/bin/activate
+pip install -e backend -e .
+(cd frontend && npm install)
 ```
 
-By default the backend installs without any TTS extra and falls back to macOS `say` if no engine is registered. To install Kokoro (recommended on Apple Silicon):
+Optional: install [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)
+for higher-quality TTS (`pip install -e 'backend[kokoro]'`; ~300 MB of
+weights download on first run). Without it, macOS `say` is the fallback.
 
-```bash
-pip install -e '.[kokoro]'   # ~300 MB of model weights download on first run
-```
-
-### Configure
-
-Required:
+Set the API key:
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-Optional but useful — point cross-repo context retrieval at the local clone of the PR's repo so Jedi can resolve references:
+## Run
 
 ```bash
-export PR_WALKTHROUGH_REPO_ROOT=/path/to/local/clone
+pr-walkthrough owner/repo/pull/N
 ```
 
-CORS defaults to the Vite dev server (`http://localhost:5173`). Override if you serve the frontend elsewhere:
+Accepts the shorthand above or the full URL. The CLI starts the
+backend + frontend, waits for the plan, then opens the browser
+straight into the session — no homepage form. Ctrl-C kills both.
+
+Flags:
+
+```
+--familiarity {tutorial,tour,review,highlights,all}   omit for interactive prompt
+--port / --frontend-port                              pin ports (default: pick free)
+--repos-dir DIR                                       parent of local checkouts (default ~/code)
+--no-open                                             skip opening the browser
+```
+
+For cross-repo context retrieval to find references, the PR's repo
+needs to be checked out under `--repos-dir` (the CLI resolves the
+repo from the URL slug — `owner/calsync/pull/6` → `<repos-dir>/calsync`).
+
+## Config
+
+Two TOML files, both optional, both written on first run when needed:
+
+```
+~/.config/pr-walkthrough/config.toml      global defaults
+<repo>/.pr-walkthrough/config.toml        per-repo overrides (gitignored)
+```
+
+The CLI writes the global file on first launch with the persistent
+narration + TTS cache enabled — every run on the same `head_sha`
+skips the LLM + TTS round-trip and reuses cached output. Cache lives
+at `~/.cache/pr-walkthrough/cache.db`, LRU-capped at 1 GB. Editing
+the prompt template invalidates downstream rows automatically (the
+key includes a hash of `pr_walkthrough/llm/prompts.py`).
+
+To disable caching: set `[cache] enabled = false` in the global
+config, or unset `PR_WALKTHROUGH_CACHE` in the env.
+
+## Stack
+
+| Layer        | Choice                                                       |
+|--------------|--------------------------------------------------------------|
+| Backend      | Python 3.11+, FastAPI, SQLite                                |
+| Frontend     | Vite + React 19 + TypeScript                                 |
+| LLM          | Claude (Sonnet) — planning + structured narration            |
+| Context      | Jedi (Python) + ripgrep fallback                             |
+| TTS          | Kokoro / Piper / macOS `say` (selectable)                    |
+| STT          | Parakeet via MLX (push-to-talk follow-ups; Apple Silicon)    |
+| PR I/O       | `gh` CLI (your existing auth)                                |
+
+## Develop
 
 ```bash
-export PR_WALKTHROUGH_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
-```
-
-### Run
-
-Two terminals:
-
-```bash
-# Terminal 1 — backend
-cd backend && uvicorn pr_walkthrough.main:app --reload --port 8200
-
-# Terminal 2 — frontend
-cd frontend && npm run dev
-```
-
-Open `http://localhost:5173`, paste a PR URL into the homepage form, and the walkthrough renders.
-
-To deep-link past the form: `http://localhost:5173/?pr=https://github.com/owner/repo/pull/123`.
-
-## How it works
-
-```
-┌─ Frontend (React) ────────────────────────────────────────┐
-│  DiffViewer  ·  NarrationPlayer  ·  RightRail (related,   │
-│  concerns, flags)  ·  FollowUpInput  ·  RelatedCodeModal  │
-└──────────────────┬────────────────────────────────────────┘
-                   │ HTTP + SSE (long-polled per chunk)
-┌──────────────────▼────────────────────────────────────────┐
-│  Backend (FastAPI)                                         │
-│  ┌─────────────┐ ┌───────────────┐ ┌──────────────────┐   │
-│  │ PRSource    │ │ TourPlanner   │ │ ChunkNarrator    │   │
-│  │ (gh CLI)    │ │ (Claude)      │ │ (Claude, tools)  │   │
-│  └─────────────┘ └───────────────┘ └──────────────────┘   │
-│  ┌─────────────┐ ┌───────────────┐ ┌──────────────────┐   │
-│  │ ContextRet  │ │ TTS adapter   │ │ STT adapter      │   │
-│  │ (Jedi + rg) │ │ (Kokoro/say)  │ │ (Parakeet · MLX) │   │
-│  └─────────────┘ └───────────────┘ └──────────────────┘   │
-│  ┌─────────────────────────────────────────────────────┐  │
-│  │ SessionStore (SQLite with FK cascades)              │  │
-│  └─────────────────────────────────────────────────────┘  │
-└────────────────────────────────────────────────────────────┘
-```
-
-The planner picks a tour order driven by *architectural altitude* — what changes the API surface lands first, then the mechanism, then tests — and a chunk can split across files or repeat a hunk if narrative cohesion warrants it. Each chunk's narration is structured (`segments[]` with optional anchors, plus `related_code`, `concerns`, and audio-segment offsets) so the UI can highlight lines while the audio plays.
-
-When you click a related-code row in the right rail, the modal fetches the **full containing file** from the configured `repo_root` and scrolls to the anchor range. Path-traversal-protected, 1 MB cap, dotfiles refused.
-
-### Data egress
-
-The diff text goes to Anthropic (Claude). **Audio never leaves the machine** — TTS synth and STT transcription both run locally. PR I/O uses your local `gh` auth.
-
-## Development
-
-```bash
-# Backend tests
+# Backend
 cd backend && pytest
 
-# E2E (frontend + MSW-mocked backend; no real Python backend needed)
+# Frontend e2e (MSW-mocked backend; no Python needed)
 cd frontend && npx playwright install --with-deps   # first time only
 cd frontend && npx playwright test
 
@@ -132,42 +99,7 @@ cd frontend && npx playwright test
 cd frontend && npx tsc --noEmit
 ```
 
-Test layout:
-
-- `backend/tests/test_chunks_endpoints.py` — long-poll, audio variants, regenerate, `/files`
-- `backend/tests/test_narration_pipeline.py` — `tts_scrub`, anchor coercion, `_snap_anchors_to_chunk_hunks`
-- `backend/tests/test_e2e.py` — end-to-end FastAPI surface against fake adapters
-- `backend/tests/pr/test_diff_parser.py` — unified diff parsing edge cases
-- `backend/tests/test_llm_adapter.py` — opt-in live Claude tests (marked `live`; needs `ANTHROPIC_API_KEY`)
-- `frontend/e2e/walkthrough.spec.ts` — Playwright over MSW
-
-## Project layout
-
-```
-pr-walkthrough/
-├── backend/
-│   └── pr_walkthrough/
-│       ├── api/            # FastAPI routers (sessions, chunks, flags, follow_ups, events)
-│       ├── context/        # Jedi + ripgrep retrievers for related code
-│       ├── fakes/          # in-process fakes for tests / dev
-│       ├── llm/            # Claude adapter, prompts, tool-use schemas
-│       ├── orchestration/  # AppContext, chunk_worker (narrate + synth pipeline)
-│       ├── pr/             # gh CLI source, unified diff parser
-│       ├── store/          # SQLite session store
-│       ├── stt/            # Parakeet (MLX) adapter
-│       ├── tts/            # Kokoro / Piper / say adapters
-│       └── main.py         # FastAPI app entry
-├── contracts/              # shared schemas + adapter Protocols (Pydantic)
-├── frontend/
-│   └── src/
-│       ├── api/            # typed client
-│       ├── components/     # DiffViewer, NarrationPlayer, RightRail, RelatedCodeModal, …
-│       ├── contexts/       # SessionContext (state machine + lifecycle)
-│       ├── mocks/          # MSW handlers + fixtures
-│       └── lib/            # transcript export, syntax highlight wrapper
-└── fixtures/               # canonical PR-shaped fixtures
-```
-
-## Acknowledgements
-
-Diff rendering by [`react-diff-view`](https://github.com/otakustay/react-diff-view), syntax highlighting via [refractor](https://github.com/wooorm/refractor) (Prism). Local TTS by [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M). Code intelligence by [Jedi](https://github.com/davidhalter/jedi). PR I/O via [GitHub CLI](https://cli.github.com/).
+For frontend-only iteration without spinning up the CLI: `cd frontend
+&& npm run dev` — Vite serves the SPA, MSW intercepts every backend
+call, and `/` shows the empty state until you visit
+`/#session=sess_pr_small_001` (the canonical MSW fixture).
