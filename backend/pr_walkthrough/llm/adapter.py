@@ -79,8 +79,8 @@ class NarrationDraft:
     anchor pass and TTS in parallel: the body is already split into
     sentences so both downstream tasks can start from the same input
     without re-splitting. The side-panel fields (related_code,
-    concerns, look_closer_for) are carried through and composed into
-    the final `ChunkNarration` by `compose_narration`.
+    concerns) are carried through and composed into the final
+    `ChunkNarration` by `compose_narration`.
     """
 
     chunk_id: str
@@ -89,7 +89,6 @@ class NarrationDraft:
     body_sentences: list[str]
     related_code: list[RelatedCode]
     concerns: list[Concern]
-    look_closer_for: list[str]
 
 log = logging.getLogger(__name__)
 
@@ -297,11 +296,10 @@ NARRATE_CHUNK_TOOL = {
             },
             "related_code": {"type": "array", "items": _RELATED_CODE_SCHEMA},
             "concerns": {"type": "array", "items": _CONCERN_SCHEMA},
-            "look_closer_for": {"type": "array", "items": {"type": "string"}},
         },
         "required": [
             "chunk_id", "intro", "body",
-            "related_code", "concerns", "look_closer_for",
+            "related_code", "concerns",
         ],
         "additionalProperties": False,
     },
@@ -548,7 +546,6 @@ class ClaudeLLMAdapter:
             body_sentences=split_into_sentences(body),
             related_code=related_code_models,
             concerns=concern_models,
-            look_closer_for=list(raw.get("look_closer_for", [])),
         )
 
     async def assign_anchors_to_sentences(
@@ -947,10 +944,10 @@ class ClaudeLLMAdapter:
         """Turn the {intro, body, …} tool output into a final ChunkNarration.
 
         Two-phase: first validate the side-panel fields (related_code,
-        concerns, look_closer_for) into a partial ChunkNarration; then
-        run the anchor pass on `body` to produce anchored segments;
-        finally prepend a single unanchored intro segment if intro is
-        set, and concatenate intro + body for the `narration` text.
+        concerns) into a partial ChunkNarration; then run the anchor
+        pass on `body` to produce anchored segments; finally prepend a
+        single unanchored intro segment if intro is set, and
+        concatenate intro + body for the `narration` text.
         """
         from .anchor_pass import anchor_body_text
 
@@ -961,9 +958,9 @@ class ClaudeLLMAdapter:
                 "emit_chunk_narration produced no `body` — narration cannot "
                 f"be empty. Raw payload: {json.dumps(raw, indent=2)}"
             )
-        # Defensive: chunk_id, related_code, concerns, look_closer_for
-        # still validate via Pydantic. Coerce stray anchor shapes on
-        # concerns/related_code (the LLM still picks those by hand).
+        # Defensive: chunk_id, related_code, concerns still validate
+        # via Pydantic. Coerce stray anchor shapes on concerns /
+        # related_code (the LLM still picks those by hand).
         _coerce_anchors(raw)
         try:
             shell = ChunkNarration.model_validate({
@@ -973,7 +970,6 @@ class ClaudeLLMAdapter:
                 "segments": [],
                 "related_code": raw.get("related_code", []),
                 "concerns": raw.get("concerns", []),
-                "look_closer_for": raw.get("look_closer_for", []),
             })
         except ValidationError as e:
             raise ValueError(

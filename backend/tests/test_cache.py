@@ -24,7 +24,6 @@ def _narration(chunk_id: str = "c1", text: str = "hello") -> ChunkNarration:
         segment_offsets_ms=[0],
         related_code=[],
         concerns=[],
-        look_closer_for=[],
     )
 
 

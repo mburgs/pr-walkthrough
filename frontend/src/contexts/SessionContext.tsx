@@ -46,6 +46,12 @@ interface SessionContextValue {
    * "anchoring" / "synthesizing" (parallel; UI shows the latest start) →
    * "ready". Missing key == "queued" (no work started yet). */
   chunkPhases: Record<string, ChunkPhase>;
+  /** Per-chunk set of dismissed proposed-concern keys. Concerns are
+   * keyed by their suggested_question text (stable across re-renders
+   * for the same LLM output). Used by the right rail to hide concerns
+   * the reviewer X'd out. */
+  dismissedConcerns: Record<string, Set<string>>;
+  dismissConcern: (chunkId: string, key: string) => void;
 }
 
 export type ChunkPhase = "narrating" | "anchoring" | "synthesizing" | "ready";
@@ -62,6 +68,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [flags, setFlags] = useState<Flag[]>([]);
   const [narrationGen, setNarrationGen] = useState<Record<string, number>>({});
   const [chunkPhases, setChunkPhases] = useState<Record<string, ChunkPhase>>({});
+  const [dismissedConcerns, setDismissedConcerns] = useState<Record<string, Set<string>>>({});
+  const dismissConcern = useCallback((chunkId: string, key: string) => {
+    setDismissedConcerns((prev) => {
+      const next = new Set(prev[chunkId] ?? []);
+      next.add(key);
+      return { ...prev, [chunkId]: next };
+    });
+  }, []);
   const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>("idle");
   // The user-selected familiarity level. Initialised from plan.familiarity
   // when a session loads; the player exposes a switcher when plan.multi_level.
@@ -285,6 +299,8 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         regenerateCurrentChunk,
         narrationGen,
         chunkPhases,
+        dismissedConcerns,
+        dismissConcern,
       }}
     >
       {children}

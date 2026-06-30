@@ -255,7 +255,6 @@ class TestStructuredOutputValidation:
             ),
             "related_code": [],
             "concerns": [],
-            "look_closer_for": [],
         }
         # Pick a real (file, line) inside c1_chunk so _validate_assignment
         # doesn't have to snap. Use the first hunk's first line.
@@ -432,7 +431,6 @@ class TestPromptCaching:
             "body": "We add a thing.",
             "related_code": [],
             "concerns": [],
-            "look_closer_for": [],
         }
         anchor_raw = {
             "assignments": [

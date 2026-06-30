@@ -342,7 +342,6 @@ async def _parallel_anchor_and_synth(
         segment_offsets_ms=seg_offsets,
         related_code=draft.related_code,
         concerns=draft.concerns,
-        look_closer_for=draft.look_closer_for,
     )
     return narration, audio
 

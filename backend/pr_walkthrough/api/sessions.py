@@ -59,8 +59,22 @@ async def create_session(
     """Fetch PR, plan tour, persist, spawn chunk-1 narration in background."""
     import uuid
 
+    # Emit progress markers the CLI's log forwarder turns into clean
+    # status updates. Without these, the only thing the user sees during
+    # the ~30s plan_tour call is silence.
+    log.info("progress: fetching PR %s", body.pr_url)
     metadata, hunks = await ctx.pr_source.fetch(body.pr_url)
+    log.info(
+        "progress: PR fetched (%d file%s, %d hunk%s)",
+        len({h.file for h in hunks}), "s" if len({h.file for h in hunks}) != 1 else "",
+        len(hunks), "s" if len(hunks) != 1 else "",
+    )
+    log.info("progress: planning tour")
     plan = await ctx.llm.plan_tour(metadata, hunks)
+    log.info(
+        "progress: tour ready (%d chunk%s)",
+        len(plan.chunks), "s" if len(plan.chunks) != 1 else "",
+    )
 
     # The LLM populates session_id in its structured output, but it can pick a
     # deterministic-looking ID (e.g. "sess_cli_cli_pr1") which collides on

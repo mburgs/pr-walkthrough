@@ -41,10 +41,6 @@
       }
     }
   ],
-  "look_closer_for": [
-    "Schema migration for the new scope and rotated_at columns \u2014 does this PR include the migration, or is it expected separately?",
-    "What happens to in-flight requests holding a now-deleted token \u2014 graceful 401, or stack trace?"
-  ],
   "segments": [
     {
       "text": "Alright, let's start in session.py because everything else in this PR builds on what changes here. The SessionStore class is gaining two new methods and modifying a third.",

@@ -90,12 +90,6 @@ def _print_narration(chunk: TourChunk, narration: ChunkNarration) -> None:
                 print(f"         → {c.suggested_question}")
         print()
 
-    if narration.look_closer_for:
-        print("  Look closer:")
-        for item in narration.look_closer_for:
-            print(f"    • {item}")
-        print()
-
 
 async def _amain(pr_url: str, mock: bool, plan_only: bool) -> int:
     pr_source, llm = _build_adapters(mock)

@@ -52,10 +52,6 @@
       }
     }
   ],
-  "look_closer_for": [
-    "Whether session_store and the role UPDATE share a database connection (atomicity)",
-    "Other callers of update_role() that may need similar treatment but aren't in this PR"
-  ],
   "segments": [
     {
       "text": "Now to the first caller of the new API. In roles.py, the update_role function gets three new lines, sandwiched between the role UPDATE and the commit. The flow is: write the new role, rotate the user's sessions, log the count, then commit.",

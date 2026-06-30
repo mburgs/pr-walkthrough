@@ -55,6 +55,8 @@ test.describe("walkthrough shell", () => {
 test.describe("narration player", () => {
   test("renders segments as clickable spans + a play+caret control", async ({ page }) => {
     await bootSession(page);
+    // Script collapsed by default; expand to reveal segment spans.
+    await page.getByRole("button", { name: /show script/ }).click();
     await expect(page.locator('[class*="segment_"]').first()).toBeVisible();
     await expect(page.getByRole("button", { name: "▶ Play" })).toBeVisible();
     await expect(page.getByTitle("More actions")).toBeVisible();
@@ -70,6 +72,8 @@ test.describe("narration player", () => {
 
   test("clicking Regenerate replaces the rendered narration content", async ({ page }) => {
     await bootSession(page);
+    // Expand the script first so the "[regen N]" stamp is visible.
+    await page.getByRole("button", { name: /show script/ }).click();
     const scriptArea = page.locator('[class*="script_"]').first();
     await expect(scriptArea).not.toContainText("[regen 1]");
 
@@ -142,13 +146,3 @@ test.describe("flag tracker", () => {
   });
 });
 
-test.describe("transcript export", () => {
-  test("Export transcript triggers a markdown download", async ({ page }) => {
-    await bootSession(page);
-
-    const downloadPromise = page.waitForEvent("download");
-    await page.getByRole("button", { name: /Export transcript/ }).click();
-    const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/walkthrough\.md$/);
-  });
-});

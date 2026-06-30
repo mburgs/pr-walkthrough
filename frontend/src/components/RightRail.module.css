@@ -161,6 +161,41 @@
   flex-wrap: wrap;
 }
 
+/* Tag on LLM-proposed (not-yet-flagged) concerns, since they live in
+ * the same Flags list as the user's confirmed flags. */
+.proposedBadge {
+  font-size: 9.5px;
+  font-family: var(--font-mono);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+  background: var(--surface-2);
+  border: 1px dashed var(--border-soft);
+  padding: 1px 6px;
+  border-radius: 999px;
+}
+
+/* Dismiss (×) button on a proposed concern. Hidden by default, fades
+ * in on row hover so it doesn't fight the headline content. */
+.dismissBtn {
+  margin-left: auto;
+  background: transparent;
+  border: none;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  opacity: 0.5;
+  transition: opacity 120ms, color 120ms, background 120ms;
+}
+.dismissBtn:hover {
+  opacity: 1;
+  color: var(--err, #ff6b6b);
+  background: var(--surface-2);
+}
+
 .rowText {
   font-size: 12.5px;
   line-height: 1.5;

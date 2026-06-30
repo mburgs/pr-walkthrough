@@ -327,11 +327,30 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     );
   }
 
+  // Script visibility: collapsed by default. Most reviewers just want
+  // the audio + scrub bar; only those who lose focus / can't hear it
+  // actually need to read the text. Click "show script" to expand.
+  const [scriptOpen, setScriptOpen] = useState(false);
+  // Auto-expand when the narration finishes loading + the user hasn't
+  // toggled it yet would be too eager; default false stays.
+
   return (
     <>
     <div className={styles.player}>
       {loading && <PhaseProgress phase={phase} />}
-      {!loading && narration && narration.segments.length > 0 ? (
+      {!loading && narration && (
+        <div className={styles.scriptToggleRow}>
+          <button
+            type="button"
+            className={styles.scriptToggle}
+            onClick={() => setScriptOpen((v) => !v)}
+            aria-expanded={scriptOpen}
+          >
+            {scriptOpen ? "▾ hide script" : "▸ show script"}
+          </button>
+        </div>
+      )}
+      {!loading && narration && scriptOpen && narration.segments.length > 0 ? (
         <div className={styles.script}>
           {narration.segments.map((seg, i) => (
             <span
@@ -352,7 +371,7 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
             </span>
           ))}
         </div>
-      ) : !loading && narration ? (
+      ) : !loading && narration && scriptOpen ? (
         <div className={styles.script}>{narration.narration}</div>
       ) : null}
 

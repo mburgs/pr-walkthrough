@@ -48,7 +48,6 @@ def _make_narration() -> ChunkNarration:
         segment_offsets_ms=[0, 500],
         related_code=[],
         concerns=[],
-        look_closer_for=[],
     )
 
 

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { SessionProvider, useSession } from "./contexts/SessionContext";
 import SessionShell from "./components/SessionShell";
-import { exportTranscript } from "./lib/exportTranscript";
 import type { LoadingPhase } from "./contexts/SessionContext";
 import styles from "./App.module.css";
 
@@ -134,14 +133,6 @@ function AppContent() {
           title="Fresh plan + narrations for this same PR (current session is discarded)"
         >
           {regenConfirm ? "↻ Confirm — discard?" : "↻ Regenerate"}
-        </button>
-        <button
-          className={styles.headerBtn}
-          onClick={() => exportTranscript(session.plan.session_id, session.plan)}
-          aria-label="Export transcript"
-          title="Download a markdown transcript of this walkthrough"
-        >
-          ↓ Transcript
         </button>
       </header>
       <main className={styles.body}>

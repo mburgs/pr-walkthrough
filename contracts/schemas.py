@@ -193,10 +193,6 @@ class ChunkNarration(BaseModel):
     )
     related_code: list[RelatedCode] = []
     concerns: list[Concern] = []
-    look_closer_for: list[str] = Field(
-        default_factory=list,
-        description="Free-form prompts to the reviewer's attention",
-    )
 
 
 class FollowUp(BaseModel):

@@ -100,7 +100,6 @@ export interface ChunkNarration {
   segment_offsets_ms: number[];
   related_code: RelatedCode[];
   concerns: Concern[];
-  look_closer_for: string[];
 }
 
 export interface FollowUp {

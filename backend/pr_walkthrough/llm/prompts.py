@@ -387,11 +387,6 @@ relationship to one of: definition, callsite, test, prior_version, sibling.
 concerns: 0-3 items. Mirror of the concerns you voiced inside body; \
 `suggested_question` is the ready-to-post PR comment wording. Don't add \
 concerns here that weren't also mentioned in body.
-
-look_closer_for: 0-3 short strings — quieter signals the reviewer should \
-re-check during careful reading (e.g. "schema migration not in this PR", \
-"no test covers the rotated == 0 case"). Distinct from concerns: these \
-aren't PR comments, they're "open this with attention" notes.
 """
 
 
@@ -467,11 +462,6 @@ def build_follow_up_user_message(
                 extras.append("  Concerns:\n" + "\n".join(concern_lines))
             if anchor_lines:
                 extras.append("  Anchors:\n" + "\n".join(anchor_lines))
-            if n.look_closer_for:
-                extras.append(
-                    "  Look closer for:\n"
-                    + "\n".join(f"    - {s}" for s in n.look_closer_for)
-                )
             extra_text = ("\n" + "\n".join(extras)) if extras else ""
             narrated_blocks.append(
                 f"Chunk {n.chunk_id}:\n{n.narration}{extra_text}"

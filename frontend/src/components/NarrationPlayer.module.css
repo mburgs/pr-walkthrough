@@ -18,6 +18,29 @@
   border-left: 2px solid var(--accent);
 }
 
+/* Collapse toggle for the narration script. Default state hides the
+ * text so the player is just controls + scrub bar; users who need the
+ * text expand it manually. */
+.scriptToggleRow {
+  display: flex;
+  align-items: center;
+  margin-bottom: 2px;
+}
+.scriptToggle {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.02em;
+  padding: 2px 0;
+  cursor: pointer;
+  transition: color 120ms;
+}
+.scriptToggle:hover {
+  color: var(--accent);
+}
+
 /* ---------- Scrub bar ---------- */
 .scrub {
   display: flex;

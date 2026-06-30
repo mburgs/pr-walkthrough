@@ -156,24 +156,32 @@ def _check_and_offer_lsp_install(pr_url: str) -> None:
     missing = [lang for lang in languages if resolve_server_command(lang) is None]
     if not missing:
         return
-    bold, dim, reset = ("\033[1;36m", "\033[2m", "\033[0m") if sys.stdout.isatty() else ("", "", "")
-    print(f"{bold}This PR touches {', '.join(sorted(languages))}.{reset}", flush=True)
-    print(f"{dim}LSP servers give precise find-references; without them we fall back to ripgrep.{reset}", flush=True)
+    _print_section(f"This PR touches {', '.join(sorted(languages))}")
+    print(_S.dim("    LSP gives precise find-references; ripgrep is the fallback"), flush=True)
     for lang in sorted(missing):
         hint = install_hint(lang)
         if not hint:
             continue
         if not sys.stdin.isatty():
-            print(f"  - {lang}: missing LSP. To install: {hint}", flush=True)
+            _print_warn(f"{lang}: missing LSP. To install: {hint}")
             continue
-        ans = input(f"  Install LSP for {lang}? Run `{hint}` [Y/n] ").strip().lower()
+        ans = input(f"    Install LSP for {lang}? Run `{_S.bold(hint)}` [Y/n] ").strip().lower()
         if ans in ("", "y", "yes"):
-            print(f"  → installing {lang} LSP…", flush=True)
+            _print_step(f"installing {lang} LSP…")
             try:
-                subprocess.check_call(hint.split())
-                print(f"  ✓ installed", flush=True)
-            except (subprocess.CalledProcessError, FileNotFoundError) as e:
-                print(f"  ! install failed ({e}); continuing without LSP for {lang}", flush=True)
+                # Capture so package-manager noise doesn't drown the CLI;
+                # surface stderr only on failure.
+                result = subprocess.run(
+                    hint.split(), capture_output=True, text=True, timeout=300,
+                )
+                if result.returncode == 0:
+                    _print_ok(f"installed {lang} LSP")
+                else:
+                    _print_err(f"install failed for {lang}; continuing without LSP")
+                    if result.stderr.strip():
+                        print(_S.dim(result.stderr.strip()), file=sys.stderr, flush=True)
+            except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+                _print_err(f"install failed ({e}); continuing without LSP for {lang}")
 
 
 def prompt_familiarity() -> str:
@@ -208,23 +216,86 @@ def pick_port() -> int:
     return port
 
 
+# --------------------------------------------------------------------------- styling
+
+
+class _Style:
+    """ANSI colour helpers. No-ops when stdout isn't a TTY so piped /
+    redirected output stays clean."""
+
+    def __init__(self) -> None:
+        enable = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
+        self._on = enable
+
+    def _wrap(self, code: str, text: str) -> str:
+        return f"\033[{code}m{text}\033[0m" if self._on else text
+
+    def ok(self, t: str) -> str:    return self._wrap("32", t)           # green
+    def warn(self, t: str) -> str:  return self._wrap("33", t)           # yellow
+    def err(self, t: str) -> str:   return self._wrap("31", t)           # red
+    def arrow(self, t: str) -> str: return self._wrap("36", t)           # cyan
+    def dim(self, t: str) -> str:   return self._wrap("2", t)
+    def bold(self, t: str) -> str:  return self._wrap("1", t)
+
+
+_S = _Style()
+
+
+def _print_step(label: str) -> None:
+    print(f"  {_S.arrow('→')} {label}", flush=True)
+
+
+def _print_ok(label: str) -> None:
+    print(f"  {_S.ok('✓')} {label}", flush=True)
+
+
+def _print_warn(label: str) -> None:
+    print(f"  {_S.warn('!')} {label}", flush=True)
+
+
+def _print_err(label: str) -> None:
+    print(f"  {_S.err('✗')} {label}", file=sys.stderr, flush=True)
+
+
+def _print_section(label: str) -> None:
+    print(f"\n{_S.bold(label)}", flush=True)
+
+
 # --------------------------------------------------------------------------- log filter
 
 
-# Lines that should bubble up to the user's terminal. Everything else
-# stays hidden unless --verbose. Errors / exceptions always print
-# regardless of the filter list — see `_is_error_line`.
-_SURFACE_PATTERNS = (
-    re.compile(r"pr_source.*fetch"),
-    re.compile(r"\bplan_tour\b"),
-    re.compile(r"chunk worker"),
-    re.compile(r"\bcache hit\b"),
-    re.compile(r"\bretriever:"),
-    re.compile(r"spawning LSP server"),
-    re.compile(r"Uvicorn running on"),
+# Patterns that map subprocess output to clean status updates in our
+# own voice. Suppressed entirely means "we print our own line for this
+# milestone, no need to forward the raw backend log too".
+_SUPPRESS_PATTERNS = (
+    re.compile(r"Uvicorn running on"),             # we print "backend ready" ourselves
     re.compile(r"Application startup complete"),
-    re.compile(r"VITE\s+v[\d.]+"),
+    re.compile(r"Started server process"),
+    re.compile(r"Waiting for application startup"),
+    re.compile(r"Started reloader process"),
+    re.compile(r"\bWatchFiles detected changes"),
+    re.compile(r"VITE\s+v[\d.]+"),                 # we print "frontend ready" ourselves
     re.compile(r"ready in \d+ ms"),
+    re.compile(r"\bLocal:\s+http"),
+    re.compile(r"\bNetwork:"),
+    re.compile(r"^\s*press h \+ enter"),
+    # Suppress per-chunk debug noise — useful for verbose mode only
+    re.compile(r"\bcache hit\b"),
+    re.compile(r"chunk worker"),
+)
+
+# Recognized backend progress markers — converted to CLI status updates.
+# Backend emits these via `log.info("progress: ...")` from key milestones.
+_PROGRESS_PATTERNS: tuple[tuple[re.Pattern, str, str], ...] = (
+    (re.compile(r"progress:\s*fetching PR"),          "step", "fetching PR diff"),
+    (re.compile(r"progress:\s*PR fetched\s*(.*)$"),   "ok",   "PR fetched {1}"),
+    (re.compile(r"progress:\s*planning tour"),        "step", "planning tour"),
+    (re.compile(r"progress:\s*tour ready\s*(.*)$"),   "ok",   "tour ready {1}"),
+    (re.compile(r"spawning LSP server\s+(\S+)\s+for\s+(\S+)"),
+                                                      "step", "spawning LSP ({2})"),
+    (re.compile(r"retriever:\s*LSP for\s+(\S+)"),     "ok",   "LSP active for {1}"),
+    (re.compile(r"retriever:\s*ripgrep fallback for\s+(\S+).*?(install [^.]+)\.?"),
+                                                      "warn", "no LSP for {1} — install: {2}"),
 )
 
 _ERROR_HINTS = (
@@ -236,18 +307,69 @@ def _is_error_line(line: str) -> bool:
     return any(hint in line for hint in _ERROR_HINTS)
 
 
-def _is_surface_line(line: str) -> bool:
-    return any(p.search(line) for p in _SURFACE_PATTERNS)
+def _is_suppressed(line: str) -> bool:
+    return any(p.search(line) for p in _SUPPRESS_PATTERNS)
 
 
-def _tee(stream: IO[bytes], prefix: str, verbose: bool) -> None:
-    """Read a subprocess pipe in a background thread, forward filtered
-    lines to stdout. Errors always pass through; surface patterns pass
-    in non-verbose mode; everything passes in verbose mode."""
+def _strip_log_prefix(line: str) -> str:
+    """Trim uvicorn/python log prefixes so the message reads cleanly.
+
+    Examples handled:
+      "[be] INFO:     Uvicorn running on..."   -> "Uvicorn running on..."
+      "2026-01-01 12:00:00,123 logger INFO message" -> "message"
+    """
+    # Strip uvicorn-style "INFO:     " prefix
+    line = re.sub(r"^(INFO|WARNING|ERROR|DEBUG|CRITICAL):\s+", "", line)
+    # Strip "2026-... logger INFO " timestamp prefix
+    line = re.sub(
+        r"^\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2}[,.]\d+\s+\S+\s+(INFO|WARNING|ERROR|DEBUG|CRITICAL)\s+",
+        "", line,
+    )
+    return line
+
+
+def _format_template(template: str, match: re.Match) -> str:
+    """Substitute {1}, {2}, … with regex capture groups. Empty captures
+    are silently dropped so the output reads naturally."""
+    out = template
+    for i, g in enumerate(match.groups(), start=1):
+        out = out.replace(f"{{{i}}}", (g or "").strip())
+    return out.strip()
+
+
+def _forwarder(stream: IO[bytes], verbose: bool) -> None:
+    """Read a subprocess pipe and translate recognized lines to CLI
+    status updates; suppress noise; let errors through verbatim."""
     for raw in iter(stream.readline, b""):
         line = raw.decode("utf-8", errors="replace").rstrip()
-        if verbose or _is_error_line(line) or _is_surface_line(line):
-            print(f"{prefix} {line}", flush=True)
+        if not line:
+            continue
+        clean = _strip_log_prefix(line)
+
+        # 1. Recognized progress markers → CLI voice
+        matched = False
+        for pat, kind, tmpl in _PROGRESS_PATTERNS:
+            m = pat.search(clean)
+            if m is None:
+                continue
+            msg = _format_template(tmpl, m)
+            if kind == "ok":   _print_ok(msg)
+            elif kind == "warn": _print_warn(msg)
+            else:               _print_step(msg)
+            matched = True
+            break
+        if matched:
+            continue
+
+        # 2. Errors pass through with red prefix so the user notices
+        if _is_error_line(clean):
+            _print_err(clean)
+            continue
+
+        # 3. Otherwise: only show in verbose mode; suppress known boot
+        # noise we already represent with our own status lines.
+        if verbose and not _is_suppressed(clean):
+            print(_S.dim(f"  · {clean}"), flush=True)
 
 
 # --------------------------------------------------------------------------- repo paths
@@ -283,9 +405,9 @@ def _warn_if_no_kokoro() -> None:
 
     The fallback chain is kokoro -> piper -> say; macOS `say` works
     everywhere but sounds noticeably synthetic. Most users want kokoro
-    but skip the optional extra by accident on first install. We
-    check via the adapter's own `is_available()` so this stays in
-    sync with the actual selection logic in `make_tts()`.
+    but skip the optional extra by accident on first install. Checked
+    via the adapter's own `is_available()` so this stays in sync with
+    the actual selection logic in `make_tts()`.
     """
     try:
         from pr_walkthrough.tts.kokoro_adapter import KokoroTTSAdapter
@@ -293,17 +415,8 @@ def _warn_if_no_kokoro() -> None:
             return
     except Exception:
         pass  # treat any import failure as "not available"
-    # ANSI yellow if the terminal looks like it'll handle it; the
-    # subprocess output forwarding already strips colour codes from
-    # non-tty parents so this is safe.
-    bold, dim, reset = ("\033[1;33m", "\033[2m", "\033[0m") if sys.stdout.isatty() else ("", "", "")
-    print(
-        f"{bold}! Kokoro TTS not installed — falling back to macOS `say`.{reset}\n"
-        f"{dim}  `say` sounds robotic; install Kokoro for usable narration:{reset}\n"
-        f"{dim}    pip install -e 'backend[kokoro]'{reset}\n"
-        f"{dim}  (one-time ~300 MB model download on first run){reset}\n",
-        flush=True,
-    )
+    _print_warn("Kokoro TTS not installed — falling back to macOS `say` (robotic)")
+    print(_S.dim("    install: pip install -e 'backend[kokoro]'  (~300 MB on first run)"), flush=True)
 
 
 def _wait_for_health(port: int, timeout: float = 30.0) -> bool:
@@ -422,12 +535,21 @@ def main(argv: list[str] | None = None) -> int:
 
     # 6. Frontend deps
     if not (frontend_dir / "node_modules" / ".bin" / "vite").exists():
-        print("→ installing frontend deps (one-time)…", flush=True)
-        subprocess.check_call(["npm", "install"], cwd=frontend_dir)
+        _print_step("installing frontend deps (one-time)…")
+        result = subprocess.run(
+            ["npm", "install"], cwd=frontend_dir,
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            _print_err("npm install failed:")
+            print(result.stderr or result.stdout, file=sys.stderr)
+            return 1
+        _print_ok("frontend deps installed")
 
     # 7. Spawn backend + frontend
-    print(f"→ backend  http://127.0.0.1:{backend_port}", flush=True)
-    print(f"→ frontend http://localhost:{frontend_port}", flush=True)
+    _print_section("Starting services")
+    _print_step(f"backend  http://127.0.0.1:{backend_port}")
+    _print_step(f"frontend http://localhost:{frontend_port}")
 
     backend = subprocess.Popen(
         [uvicorn_exe, "pr_walkthrough.main:app",
@@ -444,10 +566,10 @@ def main(argv: list[str] | None = None) -> int:
 
     verbose = bool(os.environ.get("PR_WALKTHROUGH_VERBOSE"))
     threading.Thread(
-        target=_tee, args=(backend.stdout, "[be]", verbose), daemon=True,
+        target=_forwarder, args=(backend.stdout, verbose), daemon=True,
     ).start()
     threading.Thread(
-        target=_tee, args=(frontend.stdout, "[fe]", verbose), daemon=True,
+        target=_forwarder, args=(frontend.stdout, verbose), daemon=True,
     ).start()
 
     def _shutdown(*_args) -> None:
@@ -465,26 +587,28 @@ def main(argv: list[str] | None = None) -> int:
 
     # 8. Wait for backend, create session, open browser
     if not _wait_for_health(backend_port, timeout=60.0):
-        print("error: backend didn't come up in 60s", file=sys.stderr)
+        _print_err("backend didn't come up in 60s")
         _shutdown()
         return 1
-    print("✓ backend ready", flush=True)
+    _print_ok("backend ready")
+    _print_ok("frontend ready")
 
-    print(f"→ fetching PR + planning tour for {pr_url}…", flush=True)
+    _print_section(f"Building tour for {pr_url}")
     try:
         sid = _create_session(backend_port, pr_url, familiarity)
     except httpx.HTTPError as e:
-        print(f"error: session creation failed: {e}", file=sys.stderr)
+        _print_err(f"session creation failed: {e}")
         _shutdown()
         return 1
-    print(f"✓ session {sid}", flush=True)
+    _print_ok(f"session ready ({sid})")
 
     target = f"http://localhost:{frontend_port}/#session={sid}"
     if not _wait_for_url(f"http://localhost:{frontend_port}/", timeout=30.0):
-        print("warning: frontend dev server slow; opening anyway", flush=True)
-    print(f"→ opening {target}", flush=True)
+        _print_warn("frontend dev server slow; opening anyway")
+    _print_step(f"opening {_S.bold(target)}")
     if not args.no_open:
         webbrowser.open(target)
+    print(_S.dim("\n  Ctrl-C to stop"), flush=True)
 
     # 9. Supervise until either child dies
     try:

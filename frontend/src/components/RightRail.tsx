@@ -33,7 +33,7 @@ function anchorEq(a: CodeAnchor | null | undefined, b: CodeAnchor | null | undef
 
 /**
  * Right rail: unified accordion stack — narration player + highlights,
- * concerns, related, look-closer, and the Flags tracker — all in one
+ * concerns, related, and the Flags tracker — all in one
  * scroll. Each section shows its count and is auto-collapsed when empty.
  * The whole rail collapses to a thin icon strip for diff-focused work.
  */
@@ -47,7 +47,11 @@ export default function RightRail({
   onAnchorClick,
   activeAnchor,
 }: Props) {
-  const { flags } = useSession();
+  const { flags, dismissedConcerns, dismissConcern } = useSession();
+  const concernKey = (c: Concern) => c.suggested_question || c.text;
+  const visibleConcerns = (narration?.concerns ?? []).filter(
+    (c) => !(dismissedConcerns[narration?.chunk_id ?? ""]?.has(concernKey(c))),
+  );
   const [openRelated, setOpenRelated] = useState<RelatedCode | null>(null);
   // When a CollapsedDot is clicked, remember which section the user
   // wanted; after the rail expands we scroll to it + auto-open it.
@@ -57,11 +61,10 @@ export default function RightRail({
   const sectionRefs = useRef<Record<string, HTMLDivElement | null>>({});
 
   const sectionCounts = useMemo(() => ({
-    concerns:   narration?.concerns.length ?? 0,
+    concerns:   visibleConcerns.length,
     related:    narration?.related_code.length ?? 0,
-    look:       narration?.look_closer_for.length ?? 0,
     flags:      flags.length,
-  }), [narration, flags]);
+  }), [visibleConcerns, narration, flags]);
 
   const handleDotClick = (key: string) => {
     if (collapsed) onToggle();
@@ -125,31 +128,40 @@ export default function RightRail({
             onClick={() => handleDotClick("concerns")} />
           <CollapsedDot label="Related" count={sectionCounts.related} variant="muted"
             onClick={() => handleDotClick("related")} />
-          <CollapsedDot label="Look closer" count={sectionCounts.look} variant="muted"
-            onClick={() => handleDotClick("look")} />
-          <CollapsedDot label="Flags" count={sectionCounts.flags} variant="accent"
+          <CollapsedDot label="Flags" count={sectionCounts.concerns + sectionCounts.flags} variant="accent"
             onClick={() => handleDotClick("flags")} />
         </div>
       ) : (
         <div className={styles.scroll}>
+          {/* Flags: confirmed flags + LLM-proposed concerns interleaved.
+            * Concerns render with a "proposed" badge and a "+ Flag" CTA;
+            * once added, they migrate into the Flags list. Combined into
+            * one section so the reviewer has a single pane to scan
+            * instead of toggling between Concerns and Flags. */}
           <Section
-            key="concerns"
-            title="Concerns"
-            count={sectionCounts.concerns}
-            severity={highestSeverity(narration?.concerns ?? [])}
-            defaultOpen={sectionCounts.concerns > 0}
-            triggerOpen={pendingSection === "concerns"}
-            innerRef={(el) => { sectionRefs.current["concerns"] = el; }}
+            key="flags"
+            title="Flags"
+            count={sectionCounts.concerns + sectionCounts.flags}
+            severity={highestSeverity(visibleConcerns)}
+            defaultOpen={true}
+            accent={sectionCounts.flags > 0}
+            triggerOpen={pendingSection === "concerns" || pendingSection === "flags"}
+            innerRef={(el) => { sectionRefs.current["flags"] = el; }}
           >
-            {narration?.concerns.map((c, i) => (
+            {flags.map((f) => <FlagRow key={f.flag_id} flag={f} />)}
+            {visibleConcerns.map((c, i) => (
               <ConcernRow
-                key={i}
+                key={`c-${i}`}
                 concern={c}
-                chunkId={narration.chunk_id}
+                chunkId={narration!.chunk_id}
                 activeAnchor={activeAnchor}
                 onAnchorClick={onAnchorClick}
+                onDismiss={() => dismissConcern(narration!.chunk_id, concernKey(c))}
               />
             ))}
+            {flags.length === 0 && visibleConcerns.length === 0 && (
+              <div className={styles.emptyHint}>No concerns flagged for this chunk yet.</div>
+            )}
           </Section>
 
           <Section
@@ -188,35 +200,6 @@ export default function RightRail({
                 </div>
               );
             })}
-          </Section>
-
-          <Section
-            key="look"
-            title="Look closer"
-            count={sectionCounts.look}
-            defaultOpen={false}
-            triggerOpen={pendingSection === "look"}
-            innerRef={(el) => { sectionRefs.current["look"] = el; }}
-          >
-            {narration?.look_closer_for.map((item, i) => (
-              <div key={i} className={styles.bullet}>{item}</div>
-            ))}
-          </Section>
-
-          <Section
-            key="flags"
-            title="Flags"
-            count={sectionCounts.flags}
-            defaultOpen={sectionCounts.flags > 0}
-            accent={sectionCounts.flags > 0}
-            triggerOpen={pendingSection === "flags"}
-            innerRef={(el) => { sectionRefs.current["flags"] = el; }}
-          >
-            {flags.length === 0 ? (
-              <div className={styles.emptyHint}>Add concerns to the flag list from above, then post to GitHub.</div>
-            ) : (
-              flags.map((f) => <FlagRow key={f.flag_id} flag={f} />)
-            )}
           </Section>
         </div>
       )}
@@ -295,11 +278,13 @@ function ConcernRow({
   chunkId,
   activeAnchor,
   onAnchorClick,
+  onDismiss,
 }: {
   concern: Concern;
   chunkId: string;
   activeAnchor?: CodeAnchor | null;
   onAnchorClick?: (anchor: CodeAnchor | null) => void;
+  onDismiss?: () => void;
 }) {
   const { addFlag } = useSession();
   const [added, setAdded] = useState(false);
@@ -321,13 +306,25 @@ function ConcernRow({
       onClick={() => concern.anchor && onAnchorClick?.(concern.anchor)}
     >
       <div className={styles.rowHeader}>
+        <span className={styles.proposedBadge}>proposed</span>
         <SeverityBadge severity={concern.severity} />
         {concern.anchor && <Anchor file={concern.anchor.file} line={concern.anchor.line_range} />}
+        <button
+          type="button"
+          className={styles.dismissBtn}
+          onClick={(e) => { e.stopPropagation(); onDismiss?.(); }}
+          aria-label="Dismiss proposed concern"
+          title="Dismiss"
+        >×</button>
       </div>
-      <div className={styles.rowText}>{concern.text}</div>
-      {concern.suggested_question && (
-        <div className={styles.quotedQ}>{concern.suggested_question}</div>
-      )}
+      {/* Show only the question form. The freeform `text` description
+       * essentially restates it; rendering both produced a visible
+       * duplication where the prose paragraph and the italicised
+       * blockquote said nearly the same thing. The question is also
+       * what becomes the flag body downstream. */}
+      <div className={styles.rowText}>
+        {concern.suggested_question || concern.text}
+      </div>
       {added ? (
         <span className={styles.addedNote}>✓ flagged</span>
       ) : (
