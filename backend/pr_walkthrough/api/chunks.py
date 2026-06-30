@@ -8,7 +8,7 @@ import logging
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
 from contracts.schemas import ChunkNarration
 from pr_walkthrough.orchestration import AppContext
@@ -186,10 +186,15 @@ async def get_chunk_audio(
     while elapsed < timeout:
         audio = ctx.store.get_chunk_audio(sid, cid, level=active)
         if audio is not None:
-            return StreamingResponse(
-                _iter_bytes(audio),
+            # Full Response (not StreamingResponse) so Content-Length lands
+            # in the headers — without it Chrome reports audio.duration as
+            # Infinity, which disables the scrub bar and seek. The audio
+            # is already a fully-realised bytes object in memory; nothing
+            # to gain from chunked transfer.
+            return Response(
+                content=audio,
                 media_type="audio/wav",
-                headers={"Transfer-Encoding": "chunked"},
+                headers={"Accept-Ranges": "bytes"},
             )
         await asyncio.sleep(poll)
         elapsed += poll
@@ -302,7 +307,7 @@ async def get_audio_variant(
     engine: str = Query(...),
     filtered: bool = Query(True),
     ctx: AppContext = Depends(get_app_context),
-) -> StreamingResponse:
+) -> Response:
     """Serve a specific (engine, filtered) audio variant for this chunk.
 
     Synthesises on demand if not cached. The cumulative segment offsets
@@ -372,12 +377,15 @@ async def _synth_variant(
     ctx.store.save_audio_variant(sid, cid, engine, filtered, audio, offsets)
 
 
-def _audio_response(audio: bytes, offsets: list[int]) -> StreamingResponse:
-    return StreamingResponse(
-        _iter_bytes(audio),
+def _audio_response(audio: bytes, offsets: list[int]) -> Response:
+    # Full Response with Content-Length (not chunked StreamingResponse) so
+    # the browser learns the audio's true duration on load — required for
+    # the scrub bar's seek slider to enable and render its end-time.
+    return Response(
+        content=audio,
         media_type="audio/wav",
         headers={
-            "Transfer-Encoding": "chunked",
+            "Accept-Ranges": "bytes",
             "X-Segment-Offsets-Ms": json.dumps(offsets),
             "Access-Control-Expose-Headers": "X-Segment-Offsets-Ms",
         },
