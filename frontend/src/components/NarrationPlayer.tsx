@@ -19,7 +19,16 @@ const SPEEDS = [1, 1.25, 1.5, 1.75, 2] as const;
 const SPEED_STORAGE_KEY = "pr-walkthrough.playbackRate";
 
 export default function NarrationPlayer({ chunk, narration, loading, onSegmentChange, compact = false }: Props) {
-  const { session, setCurrentChunkId, regenerateCurrentChunk, narrationGen, activeLevel, setActiveLevel } = useSession();
+  const {
+    session,
+    setCurrentChunkId,
+    regenerateCurrentChunk,
+    narrationGen,
+    activeLevel,
+    setActiveLevel,
+    chunkPhases,
+  } = useSession();
+  const phase = chunkPhases[chunk.chunk_id];
   const [menuOpen, setMenuOpen] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
   const playRef = useRef<HTMLDivElement>(null);
@@ -321,12 +330,7 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   return (
     <>
     <div className={styles.player}>
-      {loading && (
-        <div className={styles.loading}>
-          <span style={{ width: 6, height: 6, borderRadius: 3, background: "var(--accent)", display: "inline-block", animation: "pulse 1.4s infinite" }} />
-          narrating…
-        </div>
-      )}
+      {loading && <PhaseProgress phase={phase} />}
       {!loading && narration && narration.segments.length > 0 ? (
         <div className={styles.script}>
           {narration.segments.map((seg, i) => (
@@ -424,5 +428,51 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     </div>
     {audioEl}
     </>
+  );
+}
+
+// ── Phase progress indicator ─────────────────────────────────────────────────
+//
+// Renders three steps — narrating → analyzing → synthesizing — with the
+// step matching the current backend phase highlighted. Anchor pass and
+// TTS overlap on the backend, but for the viewer we render them as
+// sequential steps in reading order (analyzing precedes synthesizing on
+// the bar even though both kick off at the same time). The latest phase
+// event wins, so once TTS starts the bar advances to "synthesizing"
+// regardless of whether the anchor pass has finished.
+
+const PHASE_STEPS = [
+  { key: "narrating", label: "narrating" },
+  { key: "anchoring", label: "analyzing" },
+  { key: "synthesizing", label: "synthesizing" },
+] as const;
+
+function PhaseProgress({ phase }: { phase: string | undefined }) {
+  // Map "ready" to last step (the loading view shouldn't render in ready
+  // state but guard against late events). Unknown / undefined phase →
+  // show step 0 pulsing.
+  const activeIdx = (() => {
+    if (!phase) return 0;
+    if (phase === "ready") return PHASE_STEPS.length - 1;
+    const i = PHASE_STEPS.findIndex((s) => s.key === phase);
+    return i >= 0 ? i : 0;
+  })();
+  return (
+    <div className={styles.phaseProgress} role="status" aria-live="polite">
+      {PHASE_STEPS.map((step, i) => {
+        const done = i < activeIdx;
+        const active = i === activeIdx;
+        return (
+          <div
+            key={step.key}
+            className={`${styles.phaseStep} ${done ? styles.phaseStepDone : ""} ${active ? styles.phaseStepActive : ""}`}
+          >
+            <span className={styles.phaseDot} aria-hidden />
+            <span className={styles.phaseLabel}>{step.label}</span>
+            {i < PHASE_STEPS.length - 1 && <span className={styles.phaseConnector} aria-hidden />}
+          </div>
+        );
+      })}
+    </div>
   );
 }

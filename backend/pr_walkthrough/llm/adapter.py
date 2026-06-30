@@ -48,6 +48,7 @@ from pydantic import ValidationError
 from contracts.schemas import (
     ChunkNarration,
     CodeAnchor,
+    Concern,
     Flag,
     FollowUp,
     FollowUpAnswer,
@@ -68,6 +69,27 @@ from .prompts import (
     build_plan_tour_user_message,
 )
 from .tools import GREP_REPO_TOOL, READ_FILE_LINES_TOOL, execute_tool
+
+
+@dataclass(frozen=True)
+class NarrationDraft:
+    """Output of the first narration LLM pass, BEFORE anchor assignment.
+
+    Exposes the structured fields the orchestrator needs to run the
+    anchor pass and TTS in parallel: the body is already split into
+    sentences so both downstream tasks can start from the same input
+    without re-splitting. The side-panel fields (related_code,
+    concerns, look_closer_for) are carried through and composed into
+    the final `ChunkNarration` by `compose_narration`.
+    """
+
+    chunk_id: str
+    intro: str | None
+    body: str
+    body_sentences: list[str]
+    related_code: list[RelatedCode]
+    concerns: list[Concern]
+    look_closer_for: list[str]
 
 log = logging.getLogger(__name__)
 
@@ -454,6 +476,103 @@ class ClaudeLLMAdapter:
 
         raw = self._extract_tool_input(response, "emit_chunk_narration")
         return await self._compose_narration_from_tool_output(raw, chunk)
+
+    # ------------------------------------------------------------------
+    # prep_narration + assign_anchors_to_sentences
+    #
+    # Split-phase API used by the chunk worker so it can run the
+    # anchor pass and TTS concurrently. `prep_narration` performs the
+    # first LLM call only — no anchor work. `assign_anchors_to_sentences`
+    # runs the second LLM call. Compose the result with `compose_narration`.
+    # ------------------------------------------------------------------
+
+    async def prep_narration(
+        self,
+        plan: TourPlan,
+        chunk: TourChunk,
+        related: list[RelatedCode],
+    ) -> NarrationDraft:
+        """Run the narration LLM call only; return a draft with body sentences."""
+        from .anchor_pass import split_into_sentences
+
+        diff_context = "\n\n".join(
+            f"{h.file} {h.header}\n{h.body}"
+            for c in plan.chunks
+            for h in c.hunks
+        )
+        system_addendum = build_narrate_chunk_system_addendum(plan, diff_context)
+        user_message = build_narrate_chunk_user_message(chunk, related)
+
+        response = await self._client.messages.create(
+            model=self._narrate_model,
+            max_tokens=4096,
+            system=[
+                {
+                    "type": "text",
+                    "text": SYSTEM_PROMPT,
+                    "cache_control": {"type": "ephemeral"},
+                },
+                {
+                    "type": "text",
+                    "text": system_addendum,
+                    "cache_control": {"type": "ephemeral"},
+                },
+            ],
+            tools=[NARRATE_CHUNK_TOOL],
+            tool_choice={"type": "tool", "name": "emit_chunk_narration"},
+            messages=[{"role": "user", "content": user_message}],
+        )
+
+        raw = self._extract_tool_input(response, "emit_chunk_narration")
+        _coerce_anchors(raw)
+
+        intro = raw.get("intro") or None
+        body = raw.get("body") or ""
+        if not body.strip():
+            raise ValueError(
+                "emit_chunk_narration produced no `body` — narration cannot "
+                f"be empty. Raw payload: {json.dumps(raw, indent=2)}"
+            )
+        # Validate side-panel fields up-front so a malformed payload fails
+        # here rather than during the (later) compose step.
+        related_code_models = [
+            RelatedCode.model_validate(r) for r in raw.get("related_code", [])
+        ]
+        concern_models = [
+            Concern.model_validate(c) for c in raw.get("concerns", [])
+        ]
+        return NarrationDraft(
+            chunk_id=raw.get("chunk_id", chunk.chunk_id),
+            intro=intro,
+            body=body,
+            body_sentences=split_into_sentences(body),
+            related_code=related_code_models,
+            concerns=concern_models,
+            look_closer_for=list(raw.get("look_closer_for", [])),
+        )
+
+    async def assign_anchors_to_sentences(
+        self,
+        sentences: list[str],
+        chunk: TourChunk,
+    ) -> list[CodeAnchor | None]:
+        """Run the anchor pass and return one anchor per sentence (no merge).
+
+        Returned in the same order as `sentences`. The caller is expected
+        to combine these with per-sentence TTS offsets via
+        `compose_narration` to build the final ChunkNarration.
+        """
+        from .anchor_pass import anchor_sentences as _anchor_sentences
+
+        anchors, metrics = await _anchor_sentences(
+            sentences, chunk, self._client, self._anchor_model,
+        )
+        log.info(
+            "anchor pass: chunk=%s model=%s %d sentences (%d ms, %d in / %d out tok)",
+            chunk.chunk_id, metrics.model, metrics.sentence_count,
+            metrics.latency_ms, metrics.input_tokens, metrics.output_tokens,
+        )
+        return anchors
 
     # ------------------------------------------------------------------
     # narrate_chunk_streaming

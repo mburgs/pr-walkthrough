@@ -228,6 +228,71 @@
   font-family: var(--font-mono);
 }
 
+/* ---------- Phase progress indicator ---------- */
+.phaseProgress {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  padding: 4px 0 2px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  flex-wrap: wrap;
+}
+
+.phaseStep {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-dim);
+  letter-spacing: -0.005em;
+}
+
+.phaseDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--border-soft);
+  border: 1px solid var(--border-soft);
+  transition: background 160ms, border-color 160ms;
+}
+
+.phaseStepDone {
+  color: var(--text-muted);
+}
+.phaseStepDone .phaseDot {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.phaseStepActive {
+  color: var(--text);
+}
+.phaseStepActive .phaseDot {
+  background: var(--accent);
+  border-color: var(--accent);
+  animation: phasePulse 1.2s ease-in-out infinite;
+}
+
+.phaseConnector {
+  width: 18px;
+  height: 1px;
+  background: var(--border-soft);
+  margin: 0 8px;
+}
+.phaseStepDone + .phaseStep .phaseConnector,
+.phaseStepDone .phaseConnector {
+  background: var(--accent);
+}
+
+.phaseLabel {
+  white-space: nowrap;
+}
+
+@keyframes phasePulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(146, 204, 50, 0.45); }
+  50%      { box-shadow: 0 0 0 4px rgba(146, 204, 50, 0); }
+}
+
 .chunkLabel {
   font-size: 11px;
   color: var(--text-dim);

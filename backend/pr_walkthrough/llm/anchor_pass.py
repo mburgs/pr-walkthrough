@@ -253,22 +253,21 @@ def merge_consecutive_same_anchor(
     return segments
 
 
-async def anchor_body_text(
-    body_text: str,
+async def anchor_sentences(
+    sentences: list[str],
     chunk: TourChunk,
     client: anthropic.AsyncAnthropic,
     model: str = "claude-sonnet-4-6",
-) -> tuple[list[NarrationSegment], AnchorPassMetrics]:
-    """Split body text into sentences, anchor each one, merge runs.
+) -> tuple[list[CodeAnchor | None], AnchorPassMetrics]:
+    """Run the anchor-assignment LLM pass on pre-split sentences.
 
-    This is the production hook called from narrate_chunk after the
-    first pass returns its `body` prose. Returns the list of anchored
-    NarrationSegments (NOT prepended with an intro — the caller does
-    that) plus per-pass metrics for logging.
+    Returns one CodeAnchor per sentence (in input order) plus per-pass
+    metrics. Does NOT merge consecutive same-anchor runs — that's the
+    caller's job, because the caller has TTS offsets to carry forward
+    alongside the merge.
     """
     import time
 
-    sentences = split_into_sentences(body_text)
     if not sentences or not chunk.hunks:
         return [], AnchorPassMetrics(
             model=model, input_tokens=0, output_tokens=0,
@@ -318,13 +317,97 @@ async def anchor_body_text(
             _validate_assignment(a, chunk) if a is not None else fallback_anchor
         )
 
-    segments = merge_consecutive_same_anchor(sentences, anchors)
     metrics = AnchorPassMetrics(
         model=model,
         input_tokens=getattr(response.usage, "input_tokens", 0),
         output_tokens=getattr(response.usage, "output_tokens", 0),
         latency_ms=latency_ms,
         sentence_count=len(sentences),
+        segment_count=0,  # not merged here; caller knows
+    )
+    return anchors, metrics
+
+
+def merge_with_offsets(
+    sentences: list[str],
+    anchors: list[CodeAnchor | None],
+    sentence_offsets_ms: list[int],
+) -> tuple[list[NarrationSegment], list[int]]:
+    """Group consecutive same-anchor sentences AND their TTS offsets.
+
+    Returns (segments, segment_offsets_ms) where each segment's offset
+    is the first-sentence offset of its group — that's the moment
+    audio starts speaking the segment, which is what the player uses
+    to drive the diff highlight.
+
+    Lengths: len(sentences) == len(anchors) == len(sentence_offsets_ms)
+    coming in; len(segments) == len(segment_offsets_ms) going out.
+    """
+    if not sentences:
+        return [], []
+    if len(anchors) != len(sentences) or len(sentence_offsets_ms) != len(sentences):
+        raise ValueError(
+            "merge_with_offsets: sentence/anchor/offset lengths disagree "
+            f"({len(sentences)}/{len(anchors)}/{len(sentence_offsets_ms)})"
+        )
+
+    segments: list[NarrationSegment] = []
+    seg_offsets: list[int] = []
+    cur_text: list[str] = [sentences[0]]
+    cur_anchor = anchors[0]
+    cur_offset = sentence_offsets_ms[0]
+    for sent, anchor, off in zip(
+        sentences[1:], anchors[1:], sentence_offsets_ms[1:],
+    ):
+        same = (
+            cur_anchor is not None
+            and anchor is not None
+            and cur_anchor.file == anchor.file
+            and cur_anchor.line_range == anchor.line_range
+        )
+        if same:
+            cur_text.append(sent)
+        else:
+            segments.append(
+                NarrationSegment(text=" ".join(cur_text), anchor=cur_anchor)
+            )
+            seg_offsets.append(cur_offset)
+            cur_text = [sent]
+            cur_anchor = anchor
+            cur_offset = off
+    segments.append(NarrationSegment(text=" ".join(cur_text), anchor=cur_anchor))
+    seg_offsets.append(cur_offset)
+    return segments, seg_offsets
+
+
+async def anchor_body_text(
+    body_text: str,
+    chunk: TourChunk,
+    client: anthropic.AsyncAnthropic,
+    model: str = "claude-sonnet-4-6",
+) -> tuple[list[NarrationSegment], AnchorPassMetrics]:
+    """Split body text into sentences, anchor each one, merge runs.
+
+    Kept for the non-parallel narrate_chunk path (used by the eval
+    script and the plain `narrate_chunk` adapter call). The production
+    chunk worker uses `anchor_sentences` + `merge_with_offsets` so it
+    can carry per-sentence TTS offsets through the merge.
+    """
+    sentences = split_into_sentences(body_text)
+    if not sentences:
+        return [], AnchorPassMetrics(
+            model=model, input_tokens=0, output_tokens=0,
+            latency_ms=0, sentence_count=0, segment_count=0,
+        )
+
+    anchors, metrics = await anchor_sentences(sentences, chunk, client, model)
+    segments = merge_consecutive_same_anchor(sentences, anchors)
+    metrics = AnchorPassMetrics(
+        model=metrics.model,
+        input_tokens=metrics.input_tokens,
+        output_tokens=metrics.output_tokens,
+        latency_ms=metrics.latency_ms,
+        sentence_count=metrics.sentence_count,
         segment_count=len(segments),
     )
     return segments, metrics

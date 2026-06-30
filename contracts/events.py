@@ -59,11 +59,28 @@ class ErrorEvent(BaseModel):
     recoverable: bool
 
 
+class PhaseChangedEvent(BaseModel):
+    """Backend transitioned to a new processing phase for one chunk.
+
+    The frontend renders these as a 3-step indicator
+    (narrating → analyzing → synthesizing → ready) on the player so
+    the reviewer can see the work is progressing rather than stalled.
+    `anchoring` and `synthesizing` actually run in parallel in the
+    worker — both events fire, and the UI just shows the latest
+    started phase.
+    """
+
+    event_type: Literal["phase_changed"] = "phase_changed"
+    chunk_id: str
+    phase: Literal["narrating", "anchoring", "synthesizing", "ready"]
+
+
 SSEEvent = Union[
     ChunkStartedEvent,
     NarrationTokenEvent,
     ChunkCompleteEvent,
     AudioReadyEvent,
     FlagSuggestedEvent,
+    PhaseChangedEvent,
     ErrorEvent,
 ]

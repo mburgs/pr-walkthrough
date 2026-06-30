@@ -6,12 +6,34 @@ import asyncio
 import logging
 import re
 
-from contracts.schemas import CodeAnchor, TourChunk, TourPlan
+from contracts.schemas import (
+    ChunkNarration,
+    CodeAnchor,
+    NarrationSegment,
+    TourChunk,
+    TourPlan,
+)
 
 from . import app_context as _ctx_module
 from .event_bus import publish
 
 log = logging.getLogger(__name__)
+
+
+async def _publish_phase(session_id: str, chunk_id: str, phase: str) -> None:
+    """Emit a phase_changed SSE event for one chunk.
+
+    Phases progress narrating → anchoring + synthesizing (parallel) →
+    ready. The UI shows whichever phase started most recently, which
+    flattens the parallel pair into a sequential reading order for
+    the user (anchoring fires first because it's typically faster,
+    then synthesizing overwrites it as TTS begins).
+    """
+    await publish(session_id, {
+        "event_type": "phase_changed",
+        "chunk_id": chunk_id,
+        "phase": phase,
+    })
 
 
 def tts_scrub(text: str) -> str:
@@ -109,13 +131,31 @@ async def process_chunk(
             except Exception:
                 log.warning("context retrieval failed for %s", chunk.chunk_id, exc_info=True)
 
-        # 3. Call LLM for narration. Gated by `llm_semaphore` so multi-level
-        # prefetch (which spawns up to 4 of these concurrently per chunk)
-        # doesn't churn through API rate limits.
-        async with ctx.llm_semaphore:
-            narration = await ctx.llm.narrate_chunk(plan, chunk, related)
+        # 3. Call LLM for narration (phase: narrating). Gated by
+        # `llm_semaphore` so multi-level prefetch doesn't churn through
+        # API rate limits. We use the split-phase adapter API
+        # (`prep_narration` → `assign_anchors_to_sentences`) when the
+        # adapter exposes it, so the anchor pass and TTS can run
+        # concurrently below. The FakeLLM (tests) falls back to the
+        # one-shot `narrate_chunk` and skips parallelisation.
+        await _publish_phase(session_id, chunk.chunk_id, "narrating")
+        use_parallel = hasattr(ctx.llm, "prep_narration") and hasattr(
+            ctx.llm, "assign_anchors_to_sentences"
+        )
+        if use_parallel:
+            async with ctx.llm_semaphore:
+                draft = await ctx.llm.prep_narration(plan, chunk, related)
+            narration, audio = await _parallel_anchor_and_synth(
+                ctx, plan, chunk, draft, session_id,
+            )
+        else:
+            async with ctx.llm_semaphore:
+                narration = await ctx.llm.narrate_chunk(plan, chunk, related)
+            await _publish_phase(session_id, chunk.chunk_id, "synthesizing")
+            narration, audio = await _synth_for_narration(ctx, narration)
 
-        # 4. Emit a narration token event (in real impl would stream; here single shot)
+        # 4. Emit a narration token event (legacy SSE — frontend doesn't
+        # consume it yet, but the streaming path still publishes one).
         await publish(
             session_id,
             {
@@ -132,31 +172,10 @@ async def process_chunk(
         # 6. chunk_complete
         await publish(session_id, {"event_type": "chunk_complete", "chunk_id": chunk.chunk_id})
 
-        # 7. Synthesise audio. Per-segment synth so we know each segment's
-        # start offset in the final WAV (used to drive the diff highlight as
-        # audio plays). Gated by `tts_semaphore` because each kokoro call
-        # is ~200 MB resident + audio buffers — without throttling, four
-        # parallel multi-level synths would OOM small machines.
-        #
-        # Save the narration ONLY after TTS so the persisted record always
-        # carries segment_offsets_ms. Previously we wrote twice (once
-        # after LLM with offsets=[], once after TTS) and the frontend's
-        # long-poll could grab the first write, cache it, and never see
-        # the offsets — leaving every segment unhighlighted because
-        # activeSegment never advanced past -1.
-        async with ctx.tts_semaphore:
-            if narration.segments:
-                audio, offsets_ms = await synth_segments_to_wav(
-                    ctx.tts,
-                    [tts_scrub(s.text) for s in narration.segments],
-                )
-                narration = narration.model_copy(update={"segment_offsets_ms": offsets_ms})
-            else:
-                from pr_walkthrough.tts._wav import merge_synth_chunks
-                audio_chunks: list[bytes] = []
-                async for chunk_bytes in ctx.tts.synth(tts_scrub(narration.narration)):
-                    audio_chunks.append(chunk_bytes)
-                audio = merge_synth_chunks(audio_chunks)
+        # 7. Save narration AFTER both anchor pass and TTS are done so the
+        # persisted record always carries segment_offsets_ms. Saving
+        # earlier produced empty offsets that the frontend's long-poll
+        # could cache, leaving segments unhighlighted.
         ctx.store.save_narration(session_id, narration, level=active_level)
 
         ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio, level=active_level)
@@ -171,7 +190,7 @@ async def process_chunk(
         except Exception:
             log.warning("failed to register default variant", exc_info=True)
 
-        # 8. audio_ready
+        # 8. audio_ready + phase=ready
         audio_url = f"/sessions/{session_id}/chunks/{chunk.chunk_id}/audio"
         await publish(
             session_id,
@@ -181,6 +200,7 @@ async def process_chunk(
                 "url": audio_url,
             },
         )
+        await _publish_phase(session_id, chunk.chunk_id, "ready")
 
         # 9. flag_suggested for any concerns surfaced
         for concern in narration.concerns:
@@ -203,3 +223,101 @@ async def process_chunk(
                 "recoverable": True,
             },
         )
+
+
+async def _parallel_anchor_and_synth(
+    ctx: "_ctx_module.AppContext",
+    plan: TourPlan,
+    chunk: TourChunk,
+    draft,
+    session_id: str,
+) -> tuple[ChunkNarration, bytes]:
+    """Run anchor assignment and TTS concurrently from a NarrationDraft.
+
+    TTS speaks intro (if any) followed by each body sentence as its own
+    segment, giving us per-sentence offsets. After the anchor pass
+    returns per-sentence anchors, `merge_with_offsets` groups
+    consecutive same-anchor sentences and carries the first-sentence
+    offset forward so the player highlights line up with audio.
+    """
+    from pr_walkthrough.llm.anchor_pass import merge_with_offsets
+
+    tts_texts: list[str] = []
+    if draft.intro:
+        tts_texts.append(tts_scrub(draft.intro))
+    tts_texts.extend(tts_scrub(s) for s in draft.body_sentences)
+
+    async def _anchor_task() -> list[CodeAnchor | None]:
+        await _publish_phase(session_id, chunk.chunk_id, "anchoring")
+        async with ctx.llm_semaphore:
+            return await ctx.llm.assign_anchors_to_sentences(
+                draft.body_sentences, chunk,
+            )
+
+    async def _synth_task() -> tuple[bytes, list[int]]:
+        await _publish_phase(session_id, chunk.chunk_id, "synthesizing")
+        async with ctx.tts_semaphore:
+            return await synth_segments_to_wav(ctx.tts, tts_texts)
+
+    sentence_anchors, (audio, sentence_offsets_ms) = await asyncio.gather(
+        _anchor_task(), _synth_task(),
+    )
+
+    # Split intro offset off the front (it doesn't go through the anchor
+    # pass — intro is unanchored by design). Remaining offsets are 1:1
+    # with body sentences.
+    if draft.intro:
+        intro_offset = sentence_offsets_ms[0]
+        body_offsets = sentence_offsets_ms[1:]
+    else:
+        intro_offset = None
+        body_offsets = sentence_offsets_ms
+
+    body_segments, body_seg_offsets = merge_with_offsets(
+        draft.body_sentences, sentence_anchors, body_offsets,
+    )
+
+    segments: list[NarrationSegment] = []
+    seg_offsets: list[int] = []
+    if draft.intro:
+        segments.append(NarrationSegment(text=draft.intro.strip(), anchor=None))
+        seg_offsets.append(intro_offset or 0)
+    segments.extend(body_segments)
+    seg_offsets.extend(body_seg_offsets)
+
+    narration = ChunkNarration(
+        chunk_id=draft.chunk_id,
+        narration=" ".join(s.text for s in segments),
+        intro=draft.intro,
+        segments=segments,
+        segment_offsets_ms=seg_offsets,
+        related_code=draft.related_code,
+        concerns=draft.concerns,
+        look_closer_for=draft.look_closer_for,
+    )
+    return narration, audio
+
+
+async def _synth_for_narration(
+    ctx: "_ctx_module.AppContext",
+    narration: ChunkNarration,
+) -> tuple[ChunkNarration, bytes]:
+    """Sequential-path TTS for the FakeLLM/legacy `narrate_chunk` flow.
+
+    Used only when the LLM adapter doesn't expose the split-phase API
+    (`prep_narration` / `assign_anchors_to_sentences`). Returns the
+    narration with segment_offsets_ms filled in, plus the audio bytes.
+    """
+    async with ctx.tts_semaphore:
+        if narration.segments:
+            audio, offsets_ms = await synth_segments_to_wav(
+                ctx.tts,
+                [tts_scrub(s.text) for s in narration.segments],
+            )
+            updated = narration.model_copy(update={"segment_offsets_ms": offsets_ms})
+            return updated, audio
+        from pr_walkthrough.tts._wav import merge_synth_chunks
+        audio_chunks: list[bytes] = []
+        async for chunk_bytes in ctx.tts.synth(tts_scrub(narration.narration)):
+            audio_chunks.append(chunk_bytes)
+        return narration, merge_synth_chunks(audio_chunks)

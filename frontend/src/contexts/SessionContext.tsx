@@ -40,7 +40,15 @@ interface SessionContextValue {
    * browser doesn't replay cached bytes from before a regenerate. Keyed by
    * chunk_id so regenerating c1 doesn't also bust c2's cached audio. */
   narrationGen: Record<string, number>;
+  /** Backend processing phase per chunk, driven by SSE phase_changed events.
+   * Used by the player to render a 3-step progress indicator while the
+   * narration/audio pipeline is in flight. Phases are "narrating" →
+   * "anchoring" / "synthesizing" (parallel; UI shows the latest start) →
+   * "ready". Missing key == "queued" (no work started yet). */
+  chunkPhases: Record<string, ChunkPhase>;
 }
+
+export type ChunkPhase = "narrating" | "anchoring" | "synthesizing" | "ready";
 
 const SessionContext = createContext<SessionContextValue | null>(null);
 
@@ -53,6 +61,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
   const [narrationLoading, setNarrationLoading] = useState(false);
   const [flags, setFlags] = useState<Flag[]>([]);
   const [narrationGen, setNarrationGen] = useState<Record<string, number>>({});
+  const [chunkPhases, setChunkPhases] = useState<Record<string, ChunkPhase>>({});
   const [loadingPhase, setLoadingPhase] = useState<LoadingPhase>("idle");
   // The user-selected familiarity level. Initialised from plan.familiarity
   // when a session loads; the player exposes a switcher when plan.multi_level.
@@ -96,8 +105,36 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     setNarrationLoading(false);
     setFlags([]);
     setNarrationGen({});
+    setChunkPhases({});
     setActiveLevel("review");
   }, []);
+
+  // Subscribe to the session's SSE stream once a session is loaded.
+  // Today the only event the frontend consumes is `phase_changed`, which
+  // drives the player's progress indicator. Other events (chunk_started,
+  // audio_ready, etc.) are read via REST long-poll; SSE is purely
+  // additive. The connection auto-closes when the component unmounts or
+  // the session changes — no manual cleanup beyond `es.close()`.
+  useEffect(() => {
+    if (!session) return;
+    const sid = session.plan.session_id;
+    const es = new EventSource(`${api.BASE}/sessions/${sid}/events`);
+    const onPhase = (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data) as { chunk_id?: string; phase?: ChunkPhase };
+        if (data.chunk_id && data.phase) {
+          setChunkPhases((prev) => ({ ...prev, [data.chunk_id!]: data.phase! }));
+        }
+      } catch {
+        // ignore — malformed event payload
+      }
+    };
+    es.addEventListener("phase_changed", onPhase as EventListener);
+    return () => {
+      es.removeEventListener("phase_changed", onPhase as EventListener);
+      es.close();
+    };
+  }, [session]);
 
   const initSession = useCallback(async (
     prUrl: string,
@@ -247,6 +284,7 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
         resumeSession,
         regenerateCurrentChunk,
         narrationGen,
+        chunkPhases,
       }}
     >
       {children}

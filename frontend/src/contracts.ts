@@ -167,10 +167,17 @@ export interface ErrorEvent {
   recoverable: boolean;
 }
 
+export interface PhaseChangedEvent {
+  event_type: "phase_changed";
+  chunk_id: string;
+  phase: "narrating" | "anchoring" | "synthesizing" | "ready";
+}
+
 export type SSEEvent =
   | ChunkStartedEvent
   | NarrationTokenEvent
   | ChunkCompleteEvent
   | AudioReadyEvent
   | FlagSuggestedEvent
+  | PhaseChangedEvent
   | ErrorEvent;

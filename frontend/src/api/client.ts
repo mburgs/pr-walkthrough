@@ -12,7 +12,7 @@ import type {
   FollowUpAnswer,
 } from "../contracts";
 
-const BASE = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? "";
+export const BASE = (import.meta.env.VITE_BACKEND_URL as string | undefined) ?? "";
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, init);
