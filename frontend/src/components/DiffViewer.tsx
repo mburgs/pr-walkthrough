@@ -224,31 +224,37 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
                       : `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
                     const showUp = hunk.newStart > 1;
                     const busy = expandingFile === filePath;
+                    // react-diff-view's <Decoration> destructures children
+                    // as `[gutter, content]` when given more than one — extra
+                    // children are silently dropped. Pack everything into a
+                    // single content node so the buttons render.
                     const nodes = [
                       <Decoration key={`dec-${hunk.content}`}>
                         <span className={styles.hunkGapGutter} aria-hidden>⋮</span>
-                        <span className={styles.hunkGapLabel}>{label}</span>
-                        <span className={styles.expandBtns}>
-                          {prev && (
-                            <button
-                              type="button"
-                              className={styles.expandBtn}
-                              disabled={busy}
-                              onClick={() => expand(filePath, idx - 1, "down")}
-                              title={`Expand ${EXPAND_LINES} lines down`}
-                              aria-label="Expand context down on previous hunk"
-                            >▼</button>
-                          )}
-                          {showUp && (
-                            <button
-                              type="button"
-                              className={styles.expandBtn}
-                              disabled={busy}
-                              onClick={() => expand(filePath, idx, "up")}
-                              title={`Expand ${EXPAND_LINES} lines up`}
-                              aria-label="Expand context up"
-                            >▲</button>
-                          )}
+                        <span className={styles.hunkGapContent}>
+                          <span className={styles.hunkGapLabel}>{label}</span>
+                          <span className={styles.expandBtns}>
+                            {prev && (
+                              <button
+                                type="button"
+                                className={styles.expandBtn}
+                                disabled={busy}
+                                onClick={() => expand(filePath, idx - 1, "down")}
+                                title={`Expand ${EXPAND_LINES} lines down`}
+                                aria-label="Expand context down on previous hunk"
+                              >▼</button>
+                            )}
+                            {showUp && (
+                              <button
+                                type="button"
+                                className={styles.expandBtn}
+                                disabled={busy}
+                                onClick={() => expand(filePath, idx, "up")}
+                                title={`Expand ${EXPAND_LINES} lines up`}
+                                aria-label="Expand context up"
+                              >▲</button>
+                            )}
+                          </span>
                         </span>
                       </Decoration>,
                       <DiffHunk key={hunk.content} hunk={hunk} />,
@@ -257,16 +263,18 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
                       nodes.push(
                         <Decoration key={`dec-tail-${hunk.content}`}>
                           <span className={styles.hunkGapGutter} aria-hidden>⋮</span>
-                          <span className={styles.hunkGapLabel}>end of hunk</span>
-                          <span className={styles.expandBtns}>
-                            <button
-                              type="button"
-                              className={styles.expandBtn}
-                              disabled={busy}
-                              onClick={() => expand(filePath, idx, "down")}
-                              title={`Expand ${EXPAND_LINES} lines down`}
-                              aria-label="Expand context down"
-                            >▼</button>
+                          <span className={styles.hunkGapContent}>
+                            <span className={styles.hunkGapLabel}>end of hunk</span>
+                            <span className={styles.expandBtns}>
+                              <button
+                                type="button"
+                                className={styles.expandBtn}
+                                disabled={busy}
+                                onClick={() => expand(filePath, idx, "down")}
+                                title={`Expand ${EXPAND_LINES} lines down`}
+                                aria-label="Expand context down"
+                              >▼</button>
+                            </span>
                           </span>
                         </Decoration>
                       );
