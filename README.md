@@ -80,7 +80,7 @@ config, or unset `PR_WALKTHROUGH_CACHE` in the env.
 | Backend      | Python 3.11+, FastAPI, SQLite                                |
 | Frontend     | Vite + React 19 + TypeScript                                 |
 | LLM          | Claude (Sonnet) — planning + structured narration            |
-| Context      | Jedi (Python) + ripgrep fallback                             |
+| Context      | LSP (pyright / typescript-language-server) → ripgrep fallback |
 | TTS          | Kokoro / Piper / macOS `say` (selectable)                    |
 | STT          | Parakeet via MLX (push-to-talk follow-ups; Apple Silicon)    |
 | PR I/O       | `gh` CLI (your existing auth)                                |

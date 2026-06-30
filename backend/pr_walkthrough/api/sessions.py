@@ -17,6 +17,34 @@ log = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _log_retriever_tiers(ctx: AppContext, plan: TourPlan) -> None:
+    """Log one line per language present in the PR with the active
+    retriever tier and (if not LSP) an install hint. Reads the pool
+    state off `ctx.context` when it's the LSP-aware hybrid; silent for
+    fakes / custom retrievers."""
+    from pr_walkthrough.context.lsp.detect import (
+        install_hint, language_for_files,
+    )
+    pool = getattr(getattr(ctx, "context", None), "_pool", None)
+    files = [f for chunk in plan.chunks for f in chunk.files]
+    languages = language_for_files(files)
+    if not languages:
+        return
+    for lang in sorted(languages):
+        if pool is not None and pool.is_available(lang):
+            log.info("retriever: LSP for %s (precise references)", lang)
+        else:
+            hint = install_hint(lang)
+            if hint:
+                log.warning(
+                    "retriever: ripgrep fallback for %s — install LSP for "
+                    "better results: %s",
+                    lang, hint,
+                )
+            else:
+                log.info("retriever: ripgrep for %s (no LSP supported yet)", lang)
+
+
 class CreateSessionRequest(BaseModel):
     pr_url: str
     familiarity: FamiliarityLevel = "review"
@@ -47,6 +75,11 @@ async def create_session(
     })
 
     ctx.store.create_session(plan)
+
+    # Announce which retriever tier each language in the PR will use,
+    # so the CLI surface filter can show the user (and tell them what
+    # to install to upgrade). Cheap: just walks the chunk file list.
+    _log_retriever_tiers(ctx, plan)
 
     # Sliding-window prefetch: kick off chunk 1 (all 4 levels in ALL mode,
     # else just the active level) plus chunk 2 at the active level. Chunks

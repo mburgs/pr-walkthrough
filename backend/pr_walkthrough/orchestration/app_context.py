@@ -94,13 +94,11 @@ class AppContext:
                 from pr_walkthrough.fakes import FakePRSource
                 pr_source = FakePRSource()
         if context_retriever is None:
-            # Fail fast if ripgrep isn't installed — the retriever needs
-            # it for non-Python file lookups and per-chunk failures
-            # produced 20-line tracebacks that drowned the actual logs.
-            # Catch only the specific RipgrepNotFoundError and re-raise
-            # it cleanly; any other unrelated import failure still falls
-            # back to FakeContext so tests / dev environments without
-            # jedi still work.
+            # Fail fast if ripgrep isn't installed — it's the floor of
+            # the fallback chain. .gitignore-awareness is critical on
+            # JS/TS repos (without it, every search hits node_modules),
+            # so we keep ripgrep as the only text-search backend rather
+            # than falling back to grep with hand-maintained excludes.
             from pr_walkthrough.context.retriever import (
                 RipgrepNotFoundError, ensure_ripgrep_installed,
             )

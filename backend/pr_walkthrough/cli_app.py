@@ -120,6 +120,62 @@ def parse_pr_ref(ref: str) -> str:
 # --------------------------------------------------------------------------- prompts
 
 
+def _gh_pr_files(pr_url: str) -> list[str]:
+    """Pre-flight: ask `gh` for the PR's file list so we can detect
+    languages before the backend even boots. Cheap (~500 ms) and lets
+    us offer LSP install upfront rather than after the user's waited
+    for plan_tour. Returns [] on any failure — we degrade gracefully."""
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "view", pr_url, "--json", "files", "-q", ".files[].path"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if proc.returncode != 0:
+            return []
+        return [ln.strip() for ln in proc.stdout.splitlines() if ln.strip()]
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return []
+
+
+def _check_and_offer_lsp_install(pr_url: str) -> None:
+    """Inspect the PR's languages; for any missing LSP server, prompt
+    the user to install it. Confirmed installs run in the foreground.
+    Non-TTY (CI) silently skips the prompt — the backend still works
+    via ripgrep fallback.
+
+    Implementation note: re-checking PATH after install picks up the
+    new binary for the backend subprocess because we inherit env, and
+    `shutil.which()` re-walks PATH each call."""
+    from pr_walkthrough.context.lsp.detect import (
+        install_hint, language_for_files, resolve_server_command,
+    )
+    files = _gh_pr_files(pr_url)
+    if not files:
+        return
+    languages = language_for_files(files)
+    missing = [lang for lang in languages if resolve_server_command(lang) is None]
+    if not missing:
+        return
+    bold, dim, reset = ("\033[1;36m", "\033[2m", "\033[0m") if sys.stdout.isatty() else ("", "", "")
+    print(f"{bold}This PR touches {', '.join(sorted(languages))}.{reset}", flush=True)
+    print(f"{dim}LSP servers give precise find-references; without them we fall back to ripgrep.{reset}", flush=True)
+    for lang in sorted(missing):
+        hint = install_hint(lang)
+        if not hint:
+            continue
+        if not sys.stdin.isatty():
+            print(f"  - {lang}: missing LSP. To install: {hint}", flush=True)
+            continue
+        ans = input(f"  Install LSP for {lang}? Run `{hint}` [Y/n] ").strip().lower()
+        if ans in ("", "y", "yes"):
+            print(f"  → installing {lang} LSP…", flush=True)
+            try:
+                subprocess.check_call(hint.split())
+                print(f"  ✓ installed", flush=True)
+            except (subprocess.CalledProcessError, FileNotFoundError) as e:
+                print(f"  ! install failed ({e}); continuing without LSP for {lang}", flush=True)
+
+
 def prompt_familiarity() -> str:
     """Interactive prompt when --familiarity wasn't passed and stdin is
     a TTY. Non-TTY (CI, pipes) defaults to 'review' silently."""
@@ -163,6 +219,8 @@ _SURFACE_PATTERNS = (
     re.compile(r"\bplan_tour\b"),
     re.compile(r"chunk worker"),
     re.compile(r"\bcache hit\b"),
+    re.compile(r"\bretriever:"),
+    re.compile(r"spawning LSP server"),
     re.compile(r"Uvicorn running on"),
     re.compile(r"Application startup complete"),
     re.compile(r"VITE\s+v[\d.]+"),
@@ -317,7 +375,11 @@ def main(argv: list[str] | None = None) -> int:
     global_cfg = cfg_mod.ensure_global_config_exists()
     cfg = cfg_mod.load_config(repo_root)
 
-    # 3. Familiarity
+    # 3. LSP install offer (pre-flight, before backend boots so new
+    # binaries are on PATH when uvicorn spawns)
+    _check_and_offer_lsp_install(pr_url)
+
+    # 4. Familiarity
     familiarity = args.familiarity or cfg.familiarity or prompt_familiarity()
     if familiarity not in (*_FAMILIARITY_LEVELS, "all"):
         print(f"error: invalid familiarity {familiarity!r}", file=sys.stderr)

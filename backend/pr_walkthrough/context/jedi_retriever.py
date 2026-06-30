@@ -1,353 +1,46 @@
-"""Jedi-backed ContextRetriever for Python files.
+"""Deprecated. Replaced by the LSP retriever (pyright/pylsp) + ripgrep
+fallback. This shim exists only to avoid breaking any out-of-tree
+imports during the rollout; the real code lives in
+`pr_walkthrough.context.lsp.retriever` and
+`pr_walkthrough.context.retriever`.
 
-For a chunk anchor inside a `.py` file, we use Jedi to:
-
-  - Find each identifier appearing on the anchor lines
-  - Resolve its definition (`Script.goto`) — that's the "definition" relationship
-  - Resolve its references (`Script.get_references`) — those are "callsites"
-  - Filter out anything that lives INSIDE the anchor range itself
-
-For non-Python files (or when Jedi can't be initialised), we fall back to the
-existing ripgrep retriever via composition — see `HybridContextRetriever`
-below.
-
-Jedi is purely static — no LSP server to spawn, no language-server protocol.
-For Python repos that's adequate; it handles import resolution, class/method
-lookups, etc. without the operational overhead of pyright/pylsp.
+A future cleanup pass can delete this module entirely.
 """
 
 from __future__ import annotations
 
-import asyncio
 import logging
-import re
-from pathlib import Path
-from typing import Any
 
-from contracts.schemas import CodeAnchor, RelatedCode
+from pr_walkthrough.context.lsp.pool import LSPPool
+from pr_walkthrough.context.lsp.retriever import LSPContextRetriever
+from pr_walkthrough.context.retriever import RipgrepContextRetriever
 
-logger = logging.getLogger(__name__)
-
-
-# Patterns kept tight on purpose — we want symbol identifiers, not keywords.
-_IDENT_RE = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]*\b")
-_PY_KEYWORDS = frozenset({
-    "and", "as", "assert", "async", "await", "break", "class", "continue",
-    "def", "del", "elif", "else", "except", "finally", "for", "from", "global",
-    "if", "import", "in", "is", "lambda", "nonlocal", "not", "or", "pass",
-    "raise", "return", "try", "while", "with", "yield",
-    "True", "False", "None", "self", "cls",
-})
-# Things that are technically identifiers but rarely useful to chase
-_BORING = frozenset({
-    "str", "int", "bool", "float", "list", "dict", "set", "tuple", "bytes",
-    "None", "object", "type", "Any", "Optional", "Union", "Callable",
-    "print", "len", "range", "isinstance", "issubclass",
-})
-
-
-def _interesting_identifiers(text: str) -> list[str]:
-    out: list[str] = []
-    seen: set[str] = set()
-    for match in _IDENT_RE.finditer(text):
-        s = match.group(0)
-        if s in _PY_KEYWORDS or s in _BORING:
-            continue
-        if s.startswith("__") and s.endswith("__"):
-            continue  # dunder methods — too noisy
-        if s in seen:
-            continue
-        seen.add(s)
-        out.append(s)
-    return out
-
-
-def _read_snippet(path: Path, line: int, before: int = 1, after: int = 4) -> str:
-    """Return ~5 lines around `line` from `path` (1-indexed)."""
-    try:
-        all_lines = path.read_text(errors="replace").splitlines()
-    except OSError:
-        return ""
-    start = max(0, line - 1 - before)
-    end = min(len(all_lines), line - 1 + after + 1)
-    return "\n".join(all_lines[start:end])
-
-
-def _snippet_range(
-    path: Path, line: int, before: int = 1, after: int = 4
-) -> tuple[int, int]:
-    """The 1-indexed (start, end) line range that `_read_snippet` would return.
-
-    Kept beside `_read_snippet` so the snippet text and the anchor's
-    line_range stay in lockstep — the modal highlights *exactly* the
-    lines visible in the card preview.
-    """
-    try:
-        total = len(path.read_text(errors="replace").splitlines())
-    except OSError:
-        return (line, line)
-    start = max(1, line - before)
-    end = min(total, line + after)
-    return (start, end)
-
-
-def _is_test_path(p: Path) -> bool:
-    s = str(p).replace("\\", "/")
-    return (
-        "/tests/" in s
-        or s.startswith("tests/")
-        or "__tests__/" in s
-        or "/test/" in s
-        or s.endswith("_test.py")
-        or "/test_" in s
-        or s.startswith("test_")
-    )
-
-
-def _identifier_at(line: str, col: int) -> tuple[int, int] | None:
-    """Find the identifier overlapping column `col` in `line`. Returns (start, end_col)."""
-    for m in _IDENT_RE.finditer(line):
-        if m.start() <= col < m.end():
-            return m.start(), m.end()
-    return None
-
-
-_PROJECT_MARKERS = ("pyproject.toml", "setup.cfg", "setup.py")
-
-
-def _find_python_project_root(anchor_path: Path, repo_root: Path) -> Path:
-    """Walk upward from `anchor_path` looking for the nearest Python project
-    marker (pyproject.toml / setup.cfg / setup.py), stopping at `repo_root`.
-
-    Falls back to `repo_root` if nothing is found — preserves the previous
-    behaviour for vanilla single-package repos and gives monorepos a chance
-    to root Jedi at the actual package boundary so imports resolve.
-    """
-    try:
-        anchor_dir = anchor_path.parent.resolve()
-        repo_resolved = repo_root.resolve()
-    except OSError:
-        return repo_root
-
-    current = anchor_dir
-    while True:
-        if any((current / marker).exists() for marker in _PROJECT_MARKERS):
-            return current
-        if current == repo_resolved or current.parent == current:
-            return repo_root
-        try:
-            current.relative_to(repo_resolved)
-        except ValueError:
-            return repo_root
-        current = current.parent
-
-
-class JediContextRetriever:
-    """Resolves cross-repo references for Python anchors via Jedi.
-
-    Initialised with no state; each `related()` call is independent.
-    """
-
-    @classmethod
-    def is_available(cls) -> bool:
-        try:
-            import jedi  # noqa: F401
-            return True
-        except ImportError:
-            return False
-
-    async def related(
-        self, anchor: CodeAnchor, repo_root: Path,
-    ) -> list[RelatedCode]:
-        if not anchor.file.endswith(".py"):
-            return []
-        anchor_path = repo_root / anchor.file
-        if not anchor_path.exists() or not anchor_path.is_file():
-            return []
-        return await asyncio.to_thread(self._related_sync, anchor, repo_root)
-
-    def _related_sync(self, anchor: CodeAnchor, repo_root: Path) -> list[RelatedCode]:
-        try:
-            import jedi
-        except ImportError:
-            return []
-
-        anchor_path = repo_root / anchor.file
-        try:
-            source = anchor_path.read_text(errors="replace")
-        except OSError:
-            return []
-
-        source_lines = source.splitlines()
-        a_start, a_end = anchor.line_range
-        # Lines in the anchor range we'll mine for identifiers
-        anchor_text = "\n".join(
-            source_lines[max(0, line - 1)]
-            for line in range(a_start, a_end + 1)
-            if 1 <= line <= len(source_lines)
-        )
-        if not anchor_text.strip():
-            return []
-
-        # Pick the nearest plausible Python package root so monorepos resolve
-        # imports correctly. A bare `jedi.Project(repo_root)` works for
-        # single-package repos but in a layout like
-        #     repo/services/api/pyproject.toml + repo/services/api/app/foo.py
-        # rooting at `repo` means Jedi can't find `from app.foo import bar`.
-        project_root = _find_python_project_root(anchor_path, repo_root)
-        try:
-            project = jedi.Project(
-                path=str(project_root),
-                added_sys_path=[str(repo_root)] if project_root != repo_root else [],
-            )
-        except Exception as exc:
-            logger.info("Jedi project setup failed for %s: %s", project_root, exc)
-            return []
-
-        try:
-            script = jedi.Script(code=source, path=str(anchor_path), project=project)
-        except Exception as exc:
-            logger.info("Jedi Script init failed for %s: %s", anchor_path, exc)
-            return []
-
-        results: list[RelatedCode] = []
-        seen_keys: set[tuple[str, int]] = set()
-
-        # Walk identifiers in each anchor line. For each, ask Jedi for its
-        # definition and references. Cap the work so a huge anchor doesn't
-        # explode the token budget downstream.
-        MAX_ANCHOR_IDENTIFIERS = 8
-        MAX_RESULTS = 12
-
-        anchor_files = {anchor.file}
-        identifiers_visited: set[str] = set()
-
-        for line_idx in range(a_start, a_end + 1):
-            if 1 <= line_idx <= len(source_lines):
-                line_str = source_lines[line_idx - 1]
-            else:
-                continue
-
-            for ident in _interesting_identifiers(line_str):
-                if ident in identifiers_visited:
-                    continue
-                identifiers_visited.add(ident)
-                if len(identifiers_visited) > MAX_ANCHOR_IDENTIFIERS:
-                    break
-
-                # Find the column where the identifier appears, ask Jedi there.
-                # Word-boundary match so `foo` doesn't accidentally land on `foobar`
-                # earlier in the line when `foo` itself appears further along.
-                col_match = re.search(rf"\b{re.escape(ident)}\b", line_str)
-                if not col_match:
-                    continue
-                col = col_match.start() + 1  # mid-identifier; Jedi accepts any col within
-
-                try:
-                    defs = script.goto(line=line_idx, column=col, follow_imports=True)
-                except Exception:
-                    defs = []
-
-                # Definitions — single hit per symbol, in repo only
-                for d in defs[:1]:
-                    if not getattr(d, "module_path", None):
-                        continue
-                    try:
-                        rel = Path(d.module_path).relative_to(repo_root)
-                    except ValueError:
-                        continue  # outside repo (stdlib, deps)
-                    rel_str = str(rel)
-                    if rel_str in anchor_files and d.line and a_start <= d.line <= a_end:
-                        continue  # the definition is INSIDE the anchor itself — skip
-                    key = (rel_str, d.line or 0)
-                    if key in seen_keys:
-                        continue
-                    seen_keys.add(key)
-                    snippet = _read_snippet(Path(d.module_path), d.line or 1)
-                    relationship = "test" if _is_test_path(rel) else "definition"
-                    # Report the *definition line* itself as the range. The
-                    # snippet shows surrounding context, but the anchor should
-                    # point at the symbol so the modal highlights one row.
-                    def_line = d.line or 1
-                    results.append(RelatedCode(
-                        anchor=CodeAnchor(
-                            file=rel_str,
-                            line_range=(def_line, def_line),
-                        ),
-                        relationship=relationship,
-                        snippet=snippet,
-                    ))
-                    if len(results) >= MAX_RESULTS:
-                        return results
-
-                # References — Jedi finds callsites too
-                try:
-                    refs = script.get_references(line=line_idx, column=col, include_builtins=False)
-                except Exception:
-                    refs = []
-                for r in refs:
-                    if not getattr(r, "module_path", None):
-                        continue
-                    try:
-                        rel = Path(r.module_path).relative_to(repo_root)
-                    except ValueError:
-                        continue
-                    rel_str = str(rel)
-                    line = r.line or 0
-                    if rel_str in anchor_files and a_start <= line <= a_end:
-                        continue  # the reference IS the anchor — skip
-                    key = (rel_str, line)
-                    if key in seen_keys:
-                        continue
-                    seen_keys.add(key)
-                    snippet = _read_snippet(Path(r.module_path), line)
-                    # Anchor the FULL snippet range, not just the reference
-                    # line. The snippet renders 1 line before + 4 lines
-                    # after, and previously the modal highlighted only the
-                    # raw jedi reference line (`line`) — so the card's
-                    # snippet text and the modal's spotlight didn't line up
-                    # when jedi pointed at a nearby symbol (e.g. tracking
-                    # `Transparency` on line 91 surfaced lines 90-95, but
-                    # the modal lit up only line 91, leaving the most
-                    # visually prominent code at line 95 unmarked).
-                    snippet_start, snippet_end = _snippet_range(
-                        Path(r.module_path), line,
-                    )
-                    relationship = "test" if _is_test_path(rel) else "callsite"
-                    results.append(RelatedCode(
-                        anchor=CodeAnchor(
-                            file=rel_str,
-                            line_range=(snippet_start, snippet_end),
-                        ),
-                        relationship=relationship,
-                        snippet=snippet,
-                    ))
-                    if len(results) >= MAX_RESULTS:
-                        return results
-
-            if len(identifiers_visited) > MAX_ANCHOR_IDENTIFIERS:
-                break
-
-        return results
+log = logging.getLogger(__name__)
 
 
 class HybridContextRetriever:
-    """Jedi for .py files; ripgrep for everything else."""
+    """LSP first (per language) → ripgrep fallback. Language-agnostic
+    fallback by design — Jedi (Python-only) was removed once pyright
+    became the recommended path."""
 
-    def __init__(self) -> None:
-        self._jedi = JediContextRetriever() if JediContextRetriever.is_available() else None
-        # Lazy import — ripgrep retriever doesn't run unless we hit a non-Python file
-        from .retriever import RipgrepContextRetriever
+    def __init__(self, configured_lsp_paths: dict[str, str] | None = None) -> None:
+        self._pool = LSPPool(configured_lsp_paths)
+        self._lsp = LSPContextRetriever(self._pool)
         self._rg = RipgrepContextRetriever()
 
-    async def related(
-        self, anchor: CodeAnchor, repo_root: Path,
-    ) -> list[RelatedCode]:
-        if self._jedi is not None and anchor.file.endswith(".py"):
+    async def related(self, anchor, repo_root):
+        # Try LSP first if a server for this language is available; on
+        # failure or empty result, fall back to ripgrep. Empty is
+        # treated as "no idea" not "definitively no related code" —
+        # the ripgrep pass might still surface useful sibling code.
+        if self._lsp.is_available(anchor.file):
             try:
-                hits = await self._jedi.related(anchor, repo_root)
+                hits = await self._lsp.related(anchor, repo_root)
                 if hits:
                     return hits
             except Exception:
-                logger.warning("Jedi retriever failed; falling back to ripgrep", exc_info=True)
+                log.warning("LSP retriever raised; falling back to ripgrep", exc_info=True)
         return await self._rg.related(anchor, repo_root)
+
+    async def aclose(self) -> None:
+        await self._pool.aclose()
