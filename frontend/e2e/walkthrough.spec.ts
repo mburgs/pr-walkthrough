@@ -2,132 +2,60 @@
  * End-to-end smoke for the walkthrough UI.
  *
  * Runs against the Vite dev server in MSW (mock backend) mode — no Python
- * backend required. Each test loads `/` fresh; MSW resets in-memory flag
- * state across reloads, but tests within a single file may share it.
+ * backend required. The CLI is the production entry point, so the
+ * browser never lands on a session-init form; tests boot straight into
+ * the canonical fixture session via the `#session=` hash.
  */
 
 import { expect, test } from "@playwright/test";
 
-// Hitting `/` plain shows the homepage form (intentional). The ?pr= query
-// short-circuits straight into MSW's mocked session, regardless of value —
-// the mock returns the same canonical TourPlan for any submitted URL.
-const APP = "/?pr=https://github.com/example-org/auth-service/pull/142";
-const FIXTURE_TITLE = /Rotate session tokens/i;       // from the canonical fixture
-const FIXTURE_SUMMARY = /SessionStore gains rotate/;   // chunk c1 summary text
+// MSW's `/sessions/:sid` handler returns the canonical fixture for this
+// id. The CLI puts something similar in the URL after creating a session
+// against the real backend.
+const FIXTURE_SID = "sess_pr_small_001";
+const APP = `/#session=${FIXTURE_SID}`;
+const FIXTURE_TITLE = /Rotate session tokens/i;
+const FIXTURE_SUMMARY = /SessionStore gains rotate/;
 
 async function bootSession(page: import("@playwright/test").Page) {
   await page.goto(APP);
   await expect(page.getByText(FIXTURE_TITLE).first()).toBeVisible({ timeout: 15_000 });
-  // Wait until the chunk list has rendered at least one chunk button
   await expect(page.locator('button:has-text("c1")').first()).toBeVisible();
 }
 
-test.describe("homepage", () => {
-  test("plain / shows the PR-URL form and submits into a session", async ({ page }) => {
+test.describe("empty state", () => {
+  test("plain / shows the CLI launch hint, no form", async ({ page }) => {
     await page.goto("/");
-    const input = page.getByLabel("Pull request URL");
-    await expect(input).toBeVisible();
-    // Submit button is gated on a valid GitHub PR URL pattern.
-    const submit = page.getByRole("button", { name: /Start walkthrough/ });
-    await expect(submit).toBeDisabled();
-    await input.fill("https://github.com/example-org/auth-service/pull/142");
-    await expect(submit).toBeEnabled();
-    await submit.click();
-    await expect(page.getByText(FIXTURE_TITLE).first()).toBeVisible({ timeout: 15_000 });
-  });
-
-  test("familiarity selector shows 5 options, defaults to Review, posts choice", async ({ page }) => {
-    await page.goto("/");
-    // 4 leaf levels + the "All" sentinel for multi-level mode.
-    const radios = page.getByRole("radio");
-    await expect(radios).toHaveCount(5);
-    await expect(page.getByRole("radio", { name: "Review" })).toHaveAttribute("aria-checked", "true");
-
-    const reqPromise = page.waitForRequest((req) =>
-      req.url().endsWith("/sessions") && req.method() === "POST"
-    );
-
-    await page.getByRole("radio", { name: "Tutorial" }).click();
-    await expect(page.getByRole("radio", { name: "Tutorial" })).toHaveAttribute("aria-checked", "true");
-    await page.getByLabel("Pull request URL").fill("https://github.com/example-org/auth-service/pull/142");
-    await page.getByRole("button", { name: /Start walkthrough/ }).click();
-
-    const req = await reqPromise;
-    const body = JSON.parse(req.postData() ?? "{}");
-    expect(body.familiarity).toBe("tutorial");
-    expect(body.multi_level).toBe(false);
-    expect(body.pr_url).toContain("pull/142");
-  });
-
-  test("All option posts multi_level=true and starts at review", async ({ page }) => {
-    await page.goto("/");
-    const reqPromise = page.waitForRequest((req) =>
-      req.url().endsWith("/sessions") && req.method() === "POST"
-    );
-    await page.getByRole("radio", { name: "All" }).click();
-    await expect(page.getByRole("radio", { name: "All" })).toHaveAttribute("aria-checked", "true");
-    await page.getByLabel("Pull request URL").fill("https://github.com/example-org/auth-service/pull/142");
-    await page.getByRole("button", { name: /Start walkthrough/ }).click();
-
-    const req = await reqPromise;
-    const body = JSON.parse(req.postData() ?? "{}");
-    expect(body.multi_level).toBe(true);
-    expect(body.familiarity).toBe("review");
-  });
-
-  test("level switcher appears in multi-level session and toggles activeLevel", async ({ page }) => {
-    await page.goto("/");
-    await page.getByRole("radio", { name: "All" }).click();
-    await page.getByLabel("Pull request URL").fill("https://github.com/example-org/auth-service/pull/142");
-    await page.getByRole("button", { name: /Start walkthrough/ }).click();
-
-    await expect(page.getByText(FIXTURE_TITLE).first()).toBeVisible({ timeout: 15_000 });
-
-    // 4 chips, review active by default
-    const switcher = page.getByRole("radiogroup", { name: "Narration depth" });
-    await expect(switcher).toBeVisible();
-    const chips = switcher.getByRole("radio");
-    await expect(chips).toHaveCount(4);
-    await expect(switcher.getByRole("radio", { name: "review" })).toHaveAttribute("aria-checked", "true");
-
-    // Toggle to tutorial — the next /chunks fetch must carry ?level=tutorial.
-    const tutorialFetchPromise = page.waitForRequest((req) =>
-      /\/sessions\/[^/]+\/chunks\/c1\?level=tutorial/.test(req.url())
-    );
-    await switcher.getByRole("radio", { name: "tutorial" }).click();
-    await tutorialFetchPromise;
-    await expect(switcher.getByRole("radio", { name: "tutorial" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByText(/Launch from your terminal/i)).toBeVisible();
+    await expect(page.getByText(/pr-walkthrough owner\/repo\/pull\/N/)).toBeVisible();
+    // The old homepage form should be gone — no "Pull request URL" input.
+    await expect(page.getByLabel("Pull request URL")).toHaveCount(0);
   });
 });
 
 test.describe("walkthrough shell", () => {
-  test("loads the fixture session and renders chunks + diff", async ({ page }) => {
+  test("loads the fixture session from #session= and renders chunks + diff", async ({ page }) => {
     await bootSession(page);
 
-    // Chunk list shows all three fixture chunks
     for (const cid of ["c1", "c2", "c3"]) {
       await expect(page.locator(`button:has-text("${cid}")`).first()).toBeVisible();
     }
 
-    // The diff renders syntax-highlighted code for the first chunk
     await expect(page.locator("table.diff").first()).toBeVisible();
     await expect(page.locator(".diff-code-insert").first()).toBeVisible();
   });
 
-  test("session id is written to the URL hash after init", async ({ page }) => {
+  test("URL hash retains the session id during the session", async ({ page }) => {
     await page.goto(APP);
-    await expect(page).toHaveURL(/#session=sess_/, { timeout: 15_000 });
+    await expect(page.getByText(FIXTURE_TITLE).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page).toHaveURL(/#session=sess_/);
   });
 });
 
 test.describe("narration player", () => {
   test("renders segments as clickable spans + a play+caret control", async ({ page }) => {
     await bootSession(page);
-
-    // At least one segment span shows the script
     await expect(page.locator('[class*="segment_"]').first()).toBeVisible();
-
-    // Play button (exact text) + caret (located by its title)
     await expect(page.getByRole("button", { name: "▶ Play" })).toBeVisible();
     await expect(page.getByTitle("More actions")).toBeVisible();
   });
@@ -141,9 +69,6 @@ test.describe("narration player", () => {
   });
 
   test("clicking Regenerate replaces the rendered narration content", async ({ page }) => {
-    // The previous test only verifies the menu *exists*. This one clicks the
-    // item and asserts the script area swaps to the new content — the MSW
-    // handler stamps "[regen N] " on segment 0, so we wait for that prefix.
     await bootSession(page);
     const scriptArea = page.locator('[class*="script_"]').first();
     await expect(scriptArea).not.toContainText("[regen 1]");
@@ -169,13 +94,10 @@ test.describe("guided tour highlighting", () => {
   test("clicking a concern row highlights matching lines in the diff", async ({ page }) => {
     await bootSession(page);
 
-    // Open the Concerns section (it auto-expands when populated) and click the first row
     const row = page.locator('[role="button"][title="Click to highlight in diff"]').first();
     await expect(row).toBeVisible();
     await row.click();
 
-    // The row gets a sticky 'rowActive' class, and at least one diff row gets
-    // the 'activeRow' class (highlights the anchored line range)
     await expect(page.locator('[class*="rowActive_"]').first()).toBeVisible();
     await expect(page.locator('tr.diff-line[class*="activeRow_"]').first()).toBeVisible();
   });
@@ -185,9 +107,7 @@ test.describe("chunk navigation", () => {
   test("skip button advances to the next chunk", async ({ page }) => {
     await bootSession(page);
 
-    // Initial chunk is c1 → skip should land on c2
     await page.getByTitle(/Next chunk \(c2\)/).click();
-    // The right rail's chunk label updates to c2
     await expect(page.locator('[class*="railChunkId"]').getByText("c2")).toBeVisible();
   });
 
@@ -203,14 +123,11 @@ test.describe("flag tracker", () => {
   test("Remove button on a flag deletes it (covers the 204 No Content fix)", async ({ page }) => {
     await bootSession(page);
 
-    // The fixture seeds two flags — each renders a textarea.
     const flagTextareas = page.locator("textarea");
     await expect(flagTextareas.first()).toBeVisible();
     const before = await flagTextareas.count();
     expect(before).toBeGreaterThan(0);
 
-    // Click Remove on the first flag. Prior to the api/client 204 fix, this
-    // call rejected silently and the row stayed.
     await page.getByRole("button", { name: "Remove" }).first().click();
     await expect.poll(() => flagTextareas.count()).toBe(before - 1);
   });

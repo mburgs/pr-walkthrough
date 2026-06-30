@@ -33,7 +33,20 @@ def get_app_context() -> "AppContext":
                 str(Path.home() / "code"),
             )
         ).expanduser()
-        _app_context = AppContext(repos_dir=repos_dir)
+        # Opt-in persistent narration + TTS cache (driven by the user's
+        # global config via the CLI). Legacy `uvicorn`-only launches
+        # without the env var get the previous behaviour: no cache.
+        cache_obj = None
+        if os.environ.get("PR_WALKTHROUGH_CACHE"):
+            try:
+                from pr_walkthrough.cache import PersistentCache
+                max_gb = float(
+                    os.environ.get("PR_WALKTHROUGH_CACHE_MAX_GB", "1") or "1"
+                )
+                cache_obj = PersistentCache(max_bytes=int(max_gb * 1_073_741_824))
+            except Exception:  # pragma: no cover - defensive
+                cache_obj = None
+        _app_context = AppContext(repos_dir=repos_dir, cache=cache_obj)
     return _app_context
 
 

@@ -41,6 +41,7 @@ class AppContext:
         tts_registry: object | None = None,
         db_path: str | Path = "sessions.db",
         repos_dir: Path = Path.home() / "code",
+        cache: object | None = None,
     ) -> None:
         # Import fakes lazily so real adapters can be passed without importing fakes
         if llm is None:
@@ -123,6 +124,12 @@ class AppContext:
         self.pr_source: PRSource = pr_source
         self.context: ContextRetriever = context_retriever
         self.store: SessionStore = store
+        # Persistent content-addressed cache for narration + TTS. None
+        # disables caching; the chunk worker treats `ctx.cache is None`
+        # as "skip cache, do the work". Opt-in via the user's global
+        # config (see pr_walkthrough.config).
+        from pr_walkthrough.cache import PersistentCache
+        self.cache: PersistentCache | None = cache  # type: ignore[assignment]
         # Parent directory holding repo checkouts as subdirs (e.g. ~/code).
         # The active repo for a session is resolved per-request via
         # `repo_root_for(plan)` below, since one running backend can walk

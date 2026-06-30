@@ -45,6 +45,7 @@ dev = [
 ]
 
 [project.scripts]
+pr-walkthrough = "pr_walkthrough.cli_app:main"
 pr-walkthrough-stt = "pr_walkthrough.stt.cli:main"
 pr-context = "pr_walkthrough.context.cli:main"
 

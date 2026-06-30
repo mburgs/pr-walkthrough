@@ -121,6 +121,33 @@ async def process_chunk(
         # 1. chunk_started
         await publish(session_id, {"event_type": "chunk_started", "chunk_id": chunk.chunk_id})
 
+        # 1a. Persistent cache short-circuit. Keyed by (repo, head_sha,
+        # chunk_id, level, prompt_version) so a repeat run on the same
+        # SHA skips the LLM+TTS round-trip entirely. Cache writes
+        # happen after a successful run further down.
+        cache = getattr(ctx, "cache", None)
+        narr_key = audio_key = None
+        if cache is not None:
+            from pr_walkthrough.cache import narration_cache_key, audio_cache_key
+            narr_key = narration_cache_key(
+                plan.pr.repo, plan.pr.head_sha, chunk.chunk_id, active_level,
+            )
+            cached_narration = cache.get_narration(narr_key)
+            if cached_narration is not None:
+                audio_key = audio_cache_key(
+                    cached_narration.narration,
+                    type(ctx.tts).__name__.lower().replace("ttsadapter", ""),
+                )
+                cached_audio = cache.get_audio(audio_key)
+                if cached_audio is not None:
+                    audio, _offsets = cached_audio
+                    log.info("cache hit: %s/%s (%s)", session_id, chunk.chunk_id, active_level)
+                    await _finalise_chunk(
+                        ctx, plan, chunk, cached_narration, audio,
+                        session_id, active_level,
+                    )
+                    return
+
         # 2. Fetch related context for this chunk (use first hunk anchor)
         related = []
         if chunk.hunks:
@@ -154,64 +181,25 @@ async def process_chunk(
             await _publish_phase(session_id, chunk.chunk_id, "synthesizing")
             narration, audio = await _synth_for_narration(ctx, narration)
 
-        # 4. Emit a narration token event (legacy SSE — frontend doesn't
-        # consume it yet, but the streaming path still publishes one).
-        await publish(
-            session_id,
-            {
-                "event_type": "narration_token",
-                "chunk_id": chunk.chunk_id,
-                "text": narration.narration,
-            },
+        # 4–9. Persist + emit downstream events. Same path for
+        # freshly-computed and cache-hit narrations.
+        await _finalise_chunk(
+            ctx, plan, chunk, narration, audio, session_id, active_level,
         )
 
-        # 5. Pointer update — chunk-current marker is independent of
-        # narration/audio readiness; safe to set the moment LLM returns.
-        ctx.store.update_current_chunk(session_id, chunk.chunk_id)
-
-        # 6. chunk_complete
-        await publish(session_id, {"event_type": "chunk_complete", "chunk_id": chunk.chunk_id})
-
-        # 7. Save narration AFTER both anchor pass and TTS are done so the
-        # persisted record always carries segment_offsets_ms. Saving
-        # earlier produced empty offsets that the frontend's long-poll
-        # could cache, leaving segments unhighlighted.
-        ctx.store.save_narration(session_id, narration, level=active_level)
-
-        ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio, level=active_level)
-        # Also write the default variant to the audio_variants table so the
-        # frontend's variant switcher can find it under the engine's name.
-        default_engine = type(ctx.tts).__name__.lower().replace("ttsadapter", "")
-        try:
-            ctx.store.save_audio_variant(
-                session_id, narration.chunk_id, default_engine, True, audio,
-                narration.segment_offsets_ms or [],
-            )
-        except Exception:
-            log.warning("failed to register default variant", exc_info=True)
-
-        # 8. audio_ready + phase=ready
-        audio_url = f"/sessions/{session_id}/chunks/{chunk.chunk_id}/audio"
-        await publish(
-            session_id,
-            {
-                "event_type": "audio_ready",
-                "chunk_id": chunk.chunk_id,
-                "url": audio_url,
-            },
-        )
-        await _publish_phase(session_id, chunk.chunk_id, "ready")
-
-        # 9. flag_suggested for any concerns surfaced
-        for concern in narration.concerns:
-            await publish(
-                session_id,
-                {
-                    "event_type": "flag_suggested",
-                    "chunk_id": chunk.chunk_id,
-                    "concern": concern.model_dump(),
-                },
-            )
+        # 10. Write back to the persistent cache so the next run on the
+        # same head_sha skips the LLM + TTS work. Audio key derives from
+        # the narration text we just produced.
+        if cache is not None and narr_key is not None:
+            try:
+                cache.put_narration(narr_key, narration)
+                audio_key = audio_cache_key(
+                    narration.narration,
+                    type(ctx.tts).__name__.lower().replace("ttsadapter", ""),
+                )
+                cache.put_audio(audio_key, audio, narration.segment_offsets_ms or [])
+            except Exception:
+                log.warning("persistent cache write failed", exc_info=True)
 
     except Exception as exc:
         log.exception("chunk worker failed for %s/%s", session_id, chunk.chunk_id)
@@ -221,6 +209,67 @@ async def process_chunk(
                 "event_type": "error",
                 "message": str(exc),
                 "recoverable": True,
+            },
+        )
+
+
+async def _finalise_chunk(
+    ctx: "_ctx_module.AppContext",
+    plan: TourPlan,
+    chunk: TourChunk,
+    narration: ChunkNarration,
+    audio: bytes,
+    session_id: str,
+    active_level: str,
+) -> None:
+    """Persist + emit the post-narration events.
+
+    Shared between the fresh-work path and the cache-hit path so both
+    leave the session in the same state (store rows written, SSE events
+    fired, concerns surfaced).
+    """
+    await publish(
+        session_id,
+        {
+            "event_type": "narration_token",
+            "chunk_id": chunk.chunk_id,
+            "text": narration.narration,
+        },
+    )
+
+    ctx.store.update_current_chunk(session_id, chunk.chunk_id)
+    await publish(session_id, {"event_type": "chunk_complete", "chunk_id": chunk.chunk_id})
+
+    ctx.store.save_narration(session_id, narration, level=active_level)
+    ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio, level=active_level)
+
+    default_engine = type(ctx.tts).__name__.lower().replace("ttsadapter", "")
+    try:
+        ctx.store.save_audio_variant(
+            session_id, narration.chunk_id, default_engine, True, audio,
+            narration.segment_offsets_ms or [],
+        )
+    except Exception:
+        log.warning("failed to register default variant", exc_info=True)
+
+    audio_url = f"/sessions/{session_id}/chunks/{chunk.chunk_id}/audio"
+    await publish(
+        session_id,
+        {
+            "event_type": "audio_ready",
+            "chunk_id": chunk.chunk_id,
+            "url": audio_url,
+        },
+    )
+    await _publish_phase(session_id, chunk.chunk_id, "ready")
+
+    for concern in narration.concerns:
+        await publish(
+            session_id,
+            {
+                "event_type": "flag_suggested",
+                "chunk_id": chunk.chunk_id,
+                "concern": concern.model_dump(),
             },
         )
 

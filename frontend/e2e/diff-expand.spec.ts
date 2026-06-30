@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-const APP = "/?pr=https://github.com/example-org/auth-service/pull/142";
+const APP = "/#session=sess_pr_small_001";
 
 test.describe("expand-context buttons", () => {
   test("▲ pulls more context lines above the first hunk and updates the @@ header", async ({ page }) => {

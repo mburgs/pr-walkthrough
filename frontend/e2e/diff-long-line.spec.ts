@@ -13,7 +13,7 @@
  */
 import { expect, test } from "@playwright/test";
 
-const APP = "/?pr=https://github.com/example-org/auth-service/pull/142";
+const APP = "/#session=sess_pr_small_001";
 
 test("diff table uses auto layout so long lines can scroll horizontally", async ({ page }) => {
   await page.goto(APP);
