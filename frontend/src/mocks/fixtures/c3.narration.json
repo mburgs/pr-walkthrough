@@ -1,6 +1,7 @@
 {
   "chunk_id": "c3",
   "narration": "Last stop: the new test file. Four tests, covering the create path, rotate isolating between users, rotate returning zero, and touch updating the timestamp. The good news: the cross-user isolation test \u2014 creating sessions for users seven and eight, rotating seven, and asserting eight survives \u2014 is exactly the test I'd want. That's the regression you'd hate to miss. The gap I see: there's no test for the interaction in roles.py. We test that SessionStore.rotate() works, but not that update_role() actually calls it. A bug where someone removes the rotate() call from roles.py would slip through this test suite. Also, the touch() test stops at calling touch \u2014 it doesn't assert that rotated_at actually changed. So we know it doesn't crash, but not that it does the thing.",
+  "intro": null,
   "related_code": [],
   "concerns": [
     {

@@ -1,6 +1,7 @@
 {
   "chunk_id": "c1",
   "narration": "Alright, let's start in session.py because everything else in this PR builds on what changes here. The SessionStore class is gaining two new methods and modifying a third. First, create() now takes a scope parameter that defaults to 'default', so existing callers won't break, and it writes a rotated_at timestamp alongside created_at. Then the two new methods: rotate() deletes every session for a given user and returns the count, and touch() bumps the rotated_at on a single token. The rotate() method is the security primitive \u2014 that's what callers will use to invalidate sessions when something has changed about the user. One thing worth noting: rotate() does a hard DELETE rather than marking sessions as revoked. That's a deliberate design choice \u2014 there's no audit trail of the rotation event in this table \u2014 so if compliance needs to know who got rotated and when, that signal lives only in the application log, not the database.",
+  "intro": null,
   "related_code": [
     {
       "anchor": {

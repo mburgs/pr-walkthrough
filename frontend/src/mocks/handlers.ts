@@ -22,10 +22,13 @@ let flagCounter = 100;
 // Per-chunk regeneration counter; appended to the first segment's text so
 // e2e tests can verify a Regenerate click actually swapped the content.
 const regenCounters: Record<string, number> = {};
+// JSON fixtures infer `line_range: number[]` instead of the `[number, number]`
+// tuple in ChunkNarration; the values are correct, just narrower in the type
+// system. Cast via `unknown` to opt out of TS's tuple-shape check.
 const baseNarrations: Record<string, ChunkNarration> = {
-  c1: c1 as ChunkNarration,
-  c2: c2 as ChunkNarration,
-  c3: c3 as ChunkNarration,
+  c1: c1 as unknown as ChunkNarration,
+  c2: c2 as unknown as ChunkNarration,
+  c3: c3 as unknown as ChunkNarration,
 };
 
 function currentNarration(cid: string): ChunkNarration | undefined {

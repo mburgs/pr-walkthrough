@@ -18,6 +18,87 @@
   border-left: 2px solid var(--accent);
 }
 
+/* ---------- Scrub bar ---------- */
+.scrub {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  /* sits between script and controls; small breathing room. */
+  margin-top: 2px;
+}
+
+.time {
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--text-muted);
+  letter-spacing: 0.02em;
+  min-width: 36px;
+  text-align: center;
+  /* keep the layout stable as the second-counter ticks. */
+  font-variant-numeric: tabular-nums;
+}
+
+.scrubInput {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: 1;
+  height: 14px;
+  background: transparent;
+  cursor: pointer;
+  padding: 0;
+  margin: 0;
+}
+.scrubInput:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.scrubInput:focus { outline: none; }
+.scrubInput:focus-visible { outline: 1px dashed var(--accent); outline-offset: 4px; }
+
+/* WebKit track — paint progress with a gradient so we don't need a JS-set width div. */
+.scrubInput::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--scrub-pct, 0%),
+    var(--border-soft) var(--scrub-pct, 0%),
+    var(--border-soft) 100%
+  );
+}
+.scrubInput::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  margin-top: -4px; /* centre the thumb on the 4px track */
+  box-shadow: 0 0 0 1px var(--border-soft);
+}
+/* Firefox track */
+.scrubInput::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border-soft);
+}
+.scrubInput::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+.scrubInput::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  box-shadow: 0 0 0 1px var(--border-soft);
+}
+
 .controls {
   display: flex;
   align-items: center;
@@ -340,4 +421,18 @@
   color: var(--text-muted);
   letter-spacing: 0.06em;
   text-transform: uppercase;
+}
+
+.miniProgress {
+  width: 32px;
+  height: 3px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--accent) 0%,
+    var(--accent) var(--scrub-pct, 0%),
+    var(--border-soft) var(--scrub-pct, 0%),
+    var(--border-soft) 100%
+  );
+  margin-top: 2px;
 }

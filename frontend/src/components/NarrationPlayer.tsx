@@ -1,4 +1,5 @@
 import { useRef, useState, useEffect } from "react";
+import type { ChangeEvent, CSSProperties, SyntheticEvent } from "react";
 import type { TourChunk, ChunkNarration } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import { getAudioUrl } from "../api/client";
@@ -35,6 +36,9 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   const [audioReady, setAudioReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeSegment, setActiveSegment] = useState<number>(-1);
+  const [currentTime, setCurrentTime] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [scrubbing, setScrubbing] = useState(false);
   const [rate, setRate] = useState<number>(() => {
     const raw = Number(localStorage.getItem(SPEED_STORAGE_KEY));
     return SPEEDS.includes(raw as (typeof SPEEDS)[number]) ? raw : 1;
@@ -93,6 +97,9 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     setAudioReady(false);
     setError(null);
     setActiveSegment(-1);
+    setCurrentTime(0);
+    setDuration(0);
+    setScrubbing(false);
     if (audioRef.current) {
       audioRef.current.pause();
       audioRef.current.currentTime = 0;
@@ -106,7 +113,9 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
   const offsets = narration?.segment_offsets_ms ?? [];
   const handleTimeUpdate = () => {
     const audio = audioRef.current;
-    if (!audio || offsets.length === 0) return;
+    if (!audio) return;
+    if (!scrubbing) setCurrentTime(audio.currentTime);
+    if (offsets.length === 0) return;
     const ms = audio.currentTime * 1000;
     let idx = -1;
     for (let i = 0; i < offsets.length; i++) {
@@ -115,6 +124,50 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     }
     if (idx !== activeSegment) setActiveSegment(idx);
   };
+
+  const handleLoadedMetadata = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    // Safari can report Infinity for blob-served audio until first play; treat as 0.
+    setDuration(Number.isFinite(audio.duration) ? audio.duration : 0);
+  };
+
+  const handleDurationChange = () => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    if (Number.isFinite(audio.duration)) setDuration(audio.duration);
+  };
+
+  const seekTo = (seconds: number) => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const clamped = Math.max(0, Math.min(seconds, duration || audio.duration || 0));
+    audio.currentTime = clamped;
+    setCurrentTime(clamped);
+  };
+
+  const handleScrubInput = (e: ChangeEvent<HTMLInputElement>) => {
+    // Live preview the new time as the user drags, but don't seek the
+    // audio element until they release — seeking on every input event
+    // makes Safari stutter and racks up onSeeked events that re-trigger
+    // segment recompute mid-drag.
+    setCurrentTime(Number(e.target.value));
+  };
+
+  const handleScrubCommit = (e: SyntheticEvent<HTMLInputElement>) => {
+    setScrubbing(false);
+    seekTo(Number((e.target as HTMLInputElement).value));
+  };
+
+  const formatTime = (secs: number) => {
+    if (!Number.isFinite(secs) || secs < 0) secs = 0;
+    const total = Math.floor(secs);
+    const m = Math.floor(total / 60);
+    const s = total % 60;
+    return `${m}:${String(s).padStart(2, "0")}`;
+  };
+
+  const remaining = Math.max(0, (duration || 0) - currentTime);
 
   // Re-assert rate then play. The browser silently resets playbackRate
   // back to 1 across src loads (and sometimes between mount and first
@@ -183,10 +236,46 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
       onTimeUpdate={handleTimeUpdate}
       onSeeked={handleTimeUpdate}
       onCanPlay={handleCanPlay}
+      onLoadedMetadata={handleLoadedMetadata}
+      onDurationChange={handleDurationChange}
       preload="auto"
       style={{ display: "none" }}
     />
   ) : null;
+
+  const scrubMax = duration > 0 ? duration : 0;
+  const scrubDisabled = !audioReady || scrubMax <= 0;
+  const scrubPct = scrubMax > 0 ? (currentTime / scrubMax) * 100 : 0;
+  const scrubBar = (
+    <div className={styles.scrub}>
+      <span className={styles.time}>{formatTime(currentTime)}</span>
+      <input
+        type="range"
+        className={styles.scrubInput}
+        min={0}
+        max={scrubMax || 1}
+        step={0.01}
+        value={Math.min(currentTime, scrubMax || 0)}
+        disabled={scrubDisabled}
+        onMouseDown={() => setScrubbing(true)}
+        onTouchStart={() => setScrubbing(true)}
+        onChange={handleScrubInput}
+        onMouseUp={handleScrubCommit}
+        onTouchEnd={handleScrubCommit}
+        onKeyDown={(e) => {
+          // Arrow keys nudge ±5s; commit immediately
+          if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+            e.preventDefault();
+            const delta = e.key === "ArrowLeft" ? -5 : 5;
+            seekTo(currentTime + delta);
+          }
+        }}
+        style={{ "--scrub-pct": `${scrubPct}%` } as CSSProperties}
+        aria-label="Audio position"
+      />
+      <span className={styles.time}>-{formatTime(remaining)}</span>
+    </div>
+  );
 
   if (compact) {
     return (
@@ -217,6 +306,12 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
             aria-label={`Playback speed ${rate}×`}
           >{rate}×</button>
           <span className={styles.miniChunk}>{chunk.chunk_id}</span>
+          <div
+            className={styles.miniProgress}
+            style={{ "--scrub-pct": `${scrubPct}%` } as CSSProperties}
+            title={`${formatTime(currentTime)} / ${formatTime(duration)}`}
+            aria-hidden
+          />
         </div>
         {audioEl}
       </>
@@ -274,6 +369,8 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
           ))}
         </div>
       )}
+
+      {scrubBar}
 
       <div className={styles.controls}>
         <div className={styles.playGroup} ref={playRef}>
