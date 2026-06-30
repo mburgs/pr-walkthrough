@@ -42,7 +42,10 @@ test.describe("expand-context buttons", () => {
     // trailing ▼ should be active initially. After 9 clicks (90 lines pulled)
     // we'd reach line 120 → trailing button disappears.
     await page.locator('button:has-text("c3")').first().click();
-    const tail = page.locator(".diff-decoration:has-text('end of hunk')");
+    // Trailing decoration: identify by the down-arrow button it carries.
+    const tail = page.locator(".diff-decoration", {
+      has: page.locator('button[aria-label="Expand context down"]'),
+    });
     const downBtn = tail.locator('button[aria-label="Expand context down"]');
     await expect(downBtn).toBeVisible();
     // Click until we hit the file boundary. Cap loop iterations defensively.
@@ -61,7 +64,10 @@ test.describe("expand-context buttons", () => {
     await page.locator('button:has-text("c1")').first().click();
 
     // The trailing decoration (after the last hunk) labelled "end of hunk".
-    const tail = page.locator(".diff-decoration:has-text('end of hunk')");
+    // Trailing decoration: identify by the down-arrow button it carries.
+    const tail = page.locator(".diff-decoration", {
+      has: page.locator('button[aria-label="Expand context down"]'),
+    });
     await expect(tail).toBeVisible();
     const downBtn = tail.locator('button[aria-label="Expand context down"]');
     await expect(downBtn).toBeVisible();

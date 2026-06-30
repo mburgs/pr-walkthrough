@@ -194,20 +194,8 @@
 }
 
 /* Hunk gap row — explicit "… N lines hidden …" between non-contiguous
-   hunks so a jump from line 459 → 624 doesn't read as one block. */
-.hunkGapGutter {
-  display: inline-block;
-  width: 44px;
-  text-align: right;
-  padding-right: 8px;
-  color: var(--text-dim);
-  font-size: 12px;
-}
-.hunkGapContent {
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-}
+   hunks so a jump from line 459 → 624 doesn't read as one block.
+   GitHub-style: arrows occupy the gutter, label sits in content. */
 .hunkGapLabel {
   color: var(--info);
   font-size: 11px;
@@ -215,35 +203,43 @@
   padding-left: 6px;
 }
 
-/* Expand-context buttons inside hunk-gap decorations. Pull more
-   surrounding source lines (▲ up / ▼ down). Sit to the right of the
-   gap label; small + monochrome so they read as affordances rather
-   than calls to action. */
-.expandBtns {
-  display: inline-flex;
-  gap: 4px;
-  margin-left: 10px;
-  vertical-align: middle;
+/* Expand-context arrows in the gutter cell (where line numbers normally
+   sit). One per direction — when both render, they stack vertically.
+   Each arrow gets a dotted underline as a click affordance, GitHub-style. */
+.gutterArrows {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 1px;
+  width: 100%;
+  padding: 2px 0;
 }
 
-.expandBtn {
-  background: var(--surface-2);
-  border: 1px solid var(--border-soft);
+.gutterArrowBtn {
+  background: transparent;
+  border: none;
   color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 10px;
-  line-height: 1;
-  padding: 2px 6px;
-  border-radius: var(--radius-sm);
+  font-size: 11px;
+  line-height: 1.2;
+  padding: 1px 0;
   cursor: pointer;
-  transition: color 120ms, border-color 120ms, background 120ms;
+  text-align: center;
+  /* Dotted under-line as in GitHub's expand affordance — sits flush to
+   * the next row so stacked arrows look like a pair of buttons. */
+  border-bottom: 1px dashed var(--border-soft);
+  transition: color 120ms, background 120ms, border-color 120ms;
 }
-.expandBtn:hover:not(:disabled) {
+.gutterArrowBtn:last-child {
+  border-bottom: none;
+}
+.gutterArrowBtn:hover:not(:disabled) {
   color: var(--accent);
-  border-color: var(--accent);
-  background: var(--surface);
+  background: var(--accent-muted);
+  border-bottom-color: var(--accent);
 }
-.expandBtn:disabled {
+.gutterArrowBtn:disabled {
   opacity: 0.4;
   cursor: default;
 }
