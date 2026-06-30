@@ -128,9 +128,11 @@ export const handlers = [
   http.get("/sessions/:sid/files", ({ request }) => {
     const url = new URL(request.url);
     const path = url.searchParams.get("path") ?? "(unknown)";
-    // Stub: return a multi-line shaped sample so the modal renders meaningfully
-    // against fixture related-code anchors.
-    const content = Array.from({ length: 60 }, (_, i) =>
+    // Stub: return a multi-line shaped sample so the modal renders
+    // meaningfully against fixture related-code anchors. Sized at 120
+    // lines so the diff expand-context buttons have headroom to pull
+    // surrounding lines (fixture hunks reach into the 80s).
+    const content = Array.from({ length: 120 }, (_, i) =>
       i === 11 ? `def example_${i + 1}():  # ← target` : `def example_${i + 1}():`
     ).join("\n");
     return HttpResponse.json({ path, content });
