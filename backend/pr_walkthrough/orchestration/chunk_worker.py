@@ -125,8 +125,8 @@ async def process_chunk(
             },
         )
 
-        # 5. Persist narration (keyed per level)
-        ctx.store.save_narration(session_id, narration, level=active_level)
+        # 5. Pointer update — chunk-current marker is independent of
+        # narration/audio readiness; safe to set the moment LLM returns.
         ctx.store.update_current_chunk(session_id, chunk.chunk_id)
 
         # 6. chunk_complete
@@ -137,6 +137,13 @@ async def process_chunk(
         # audio plays). Gated by `tts_semaphore` because each kokoro call
         # is ~200 MB resident + audio buffers — without throttling, four
         # parallel multi-level synths would OOM small machines.
+        #
+        # Save the narration ONLY after TTS so the persisted record always
+        # carries segment_offsets_ms. Previously we wrote twice (once
+        # after LLM with offsets=[], once after TTS) and the frontend's
+        # long-poll could grab the first write, cache it, and never see
+        # the offsets — leaving every segment unhighlighted because
+        # activeSegment never advanced past -1.
         async with ctx.tts_semaphore:
             if narration.segments:
                 audio, offsets_ms = await synth_segments_to_wav(
@@ -144,13 +151,13 @@ async def process_chunk(
                     [tts_scrub(s.text) for s in narration.segments],
                 )
                 narration = narration.model_copy(update={"segment_offsets_ms": offsets_ms})
-                ctx.store.save_narration(session_id, narration, level=active_level)
             else:
                 from pr_walkthrough.tts._wav import merge_synth_chunks
                 audio_chunks: list[bytes] = []
                 async for chunk_bytes in ctx.tts.synth(tts_scrub(narration.narration)):
                     audio_chunks.append(chunk_bytes)
                 audio = merge_synth_chunks(audio_chunks)
+        ctx.store.save_narration(session_id, narration, level=active_level)
 
         ctx.store.save_chunk_audio(session_id, narration.chunk_id, audio, level=active_level)
         # Also write the default variant to the audio_variants table so the

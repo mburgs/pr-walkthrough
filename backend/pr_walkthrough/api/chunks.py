@@ -59,6 +59,19 @@ async def get_chunk_narration(
     state = _ensure_session(sid, ctx)
     active = level or state.plan.familiarity
     _maybe_kick_off_narration(ctx, state.plan, sid, cid, level=active)
+    # Sliding-window prefetch: when the reviewer asks for chunk N, also
+    # kick chunk N+1 in the background. Coalescing-safe (the kicker is a
+    # no-op if it's already in flight or already done), so spamming the
+    # endpoint while typing won't pile up duplicates.
+    chunk_ids = [c.chunk_id for c in state.plan.chunks]
+    try:
+        next_idx = chunk_ids.index(cid) + 1
+        if next_idx < len(chunk_ids):
+            _maybe_kick_off_narration(
+                ctx, state.plan, sid, chunk_ids[next_idx], level=active,
+            )
+    except ValueError:
+        pass  # cid not in plan — surfaced by the long-poll loop below
     elapsed = 0.0
     while elapsed < _LONG_POLL_TIMEOUT:
         narration = ctx.store.get_narration(sid, cid, level=active)

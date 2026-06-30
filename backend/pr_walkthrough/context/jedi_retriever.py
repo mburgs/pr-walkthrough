@@ -73,6 +73,24 @@ def _read_snippet(path: Path, line: int, before: int = 1, after: int = 4) -> str
     return "\n".join(all_lines[start:end])
 
 
+def _snippet_range(
+    path: Path, line: int, before: int = 1, after: int = 4
+) -> tuple[int, int]:
+    """The 1-indexed (start, end) line range that `_read_snippet` would return.
+
+    Kept beside `_read_snippet` so the snippet text and the anchor's
+    line_range stay in lockstep — the modal highlights *exactly* the
+    lines visible in the card preview.
+    """
+    try:
+        total = len(path.read_text(errors="replace").splitlines())
+    except OSError:
+        return (line, line)
+    start = max(1, line - before)
+    end = min(total, line + after)
+    return (start, end)
+
+
 def _is_test_path(p: Path) -> bool:
     s = str(p).replace("\\", "/")
     return (
@@ -283,11 +301,23 @@ class JediContextRetriever:
                         continue
                     seen_keys.add(key)
                     snippet = _read_snippet(Path(r.module_path), line)
+                    # Anchor the FULL snippet range, not just the reference
+                    # line. The snippet renders 1 line before + 4 lines
+                    # after, and previously the modal highlighted only the
+                    # raw jedi reference line (`line`) — so the card's
+                    # snippet text and the modal's spotlight didn't line up
+                    # when jedi pointed at a nearby symbol (e.g. tracking
+                    # `Transparency` on line 91 surfaced lines 90-95, but
+                    # the modal lit up only line 91, leaving the most
+                    # visually prominent code at line 95 unmarked).
+                    snippet_start, snippet_end = _snippet_range(
+                        Path(r.module_path), line,
+                    )
                     relationship = "test" if _is_test_path(rel) else "callsite"
                     results.append(RelatedCode(
                         anchor=CodeAnchor(
                             file=rel_str,
-                            line_range=(line, line),
+                            line_range=(snippet_start, snippet_end),
                         ),
                         relationship=relationship,
                         snippet=snippet,

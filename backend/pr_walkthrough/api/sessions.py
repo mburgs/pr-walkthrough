@@ -48,25 +48,27 @@ async def create_session(
 
     ctx.store.create_session(plan)
 
-    # Kick off background narration for every chunk at the active level so
-    # the reviewer doesn't pay the LLM+TTS latency one chunk at a time.
-    # Concurrency is gated by `llm_semaphore` / `tts_semaphore`, so blasting
-    # a 10-chunk PR doesn't actually run 10 LLM calls or 10 TTS synths in
-    # parallel — it queues them behind the configured cap (defaults: 8 LLM,
-    # 1–4 TTS depending on detected RAM). Result: while the reviewer reads
-    # chunk N, chunks N+1…N+k are already being prepared.
+    # Sliding-window prefetch: kick off chunk 1 (all 4 levels in ALL mode,
+    # else just the active level) plus chunk 2 at the active level. Chunks
+    # 3+ are kicked lazily by GET /chunks/:cid as the reviewer advances —
+    # see _maybe_prefetch_next in api/chunks.py.
     #
-    # In ALL mode the first chunk gets all four familiarity levels (so the
-    # level switcher feels instant); later chunks still get only the active
-    # level prefetched, with the other three lazily generated on demand.
+    # Why narrow: each chunk now runs two LLM calls (narration + anchor
+    # pass) inside the same llm_semaphore slot, so wide prefetch on a
+    # multi-chunk PR pegs the semaphore for ~minutes and the active
+    # chunk's TTS waits behind dozens of background tasks. The sliding
+    # window keeps 2 ahead "in the oven" — fast enough to feel
+    # prefetched, narrow enough that the active chunk stays first in
+    # the queue.
     levels_for_first = _ALL_LEVELS if plan.multi_level else (plan.familiarity,)
     if plan.chunks:
         for lvl in levels_for_first:
             _maybe_kick_off_narration(ctx, plan, plan.session_id, plan.chunks[0].chunk_id, level=lvl)
-        for chunk in plan.chunks[1:]:
-            _maybe_kick_off_narration(
-                ctx, plan, plan.session_id, chunk.chunk_id, level=plan.familiarity,
-            )
+    if len(plan.chunks) > 1:
+        _maybe_kick_off_narration(
+            ctx, plan, plan.session_id, plan.chunks[1].chunk_id,
+            level=plan.familiarity,
+        )
 
     return plan
 
