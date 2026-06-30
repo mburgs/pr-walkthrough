@@ -220,6 +220,34 @@ def _find_venv_bin(repo_root: Path, exe: str) -> str:
     return exe
 
 
+def _warn_if_no_kokoro() -> None:
+    """Loudly nudge the user toward Kokoro if it isn't installed.
+
+    The fallback chain is kokoro -> piper -> say; macOS `say` works
+    everywhere but sounds noticeably synthetic. Most users want kokoro
+    but skip the optional extra by accident on first install. We
+    check via the adapter's own `is_available()` so this stays in
+    sync with the actual selection logic in `make_tts()`.
+    """
+    try:
+        from pr_walkthrough.tts.kokoro_adapter import KokoroTTSAdapter
+        if KokoroTTSAdapter.is_available():
+            return
+    except Exception:
+        pass  # treat any import failure as "not available"
+    # ANSI yellow if the terminal looks like it'll handle it; the
+    # subprocess output forwarding already strips colour codes from
+    # non-tty parents so this is safe.
+    bold, dim, reset = ("\033[1;33m", "\033[2m", "\033[0m") if sys.stdout.isatty() else ("", "", "")
+    print(
+        f"{bold}! Kokoro TTS not installed — falling back to macOS `say`.{reset}\n"
+        f"{dim}  `say` sounds robotic; install Kokoro for usable narration:{reset}\n"
+        f"{dim}    pip install -e 'backend[kokoro]'{reset}\n"
+        f"{dim}  (one-time ~300 MB model download on first run){reset}\n",
+        flush=True,
+    )
+
+
 def _wait_for_health(port: int, timeout: float = 30.0) -> bool:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -324,6 +352,11 @@ def main(argv: list[str] | None = None) -> int:
     if global_cfg.cache.enabled:
         env["PR_WALKTHROUGH_CACHE"] = "1"
         env["PR_WALKTHROUGH_CACHE_MAX_GB"] = str(global_cfg.cache.max_gb)
+
+    # 5b. TTS engine check. Kokoro produces much better narration than
+    # macOS `say`; warn early when it's not installed so the user
+    # doesn't sit through a session of robot voice and wonder why.
+    _warn_if_no_kokoro()
 
     # 6. Frontend deps
     if not (frontend_dir / "node_modules" / ".bin" / "vite").exists():
