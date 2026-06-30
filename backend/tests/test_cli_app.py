@@ -64,7 +64,9 @@ def test_suppressed_boot_noise() -> None:
     assert _is_suppressed("VITE v8.1.0 dev server running")
     assert _is_suppressed("ready in 412 ms")
     assert _is_suppressed("Application startup complete")
-    assert _is_suppressed("cache hit: sess_x/c1 (review)")
+    # `cache hit` now bubbles through as a status update so the user
+    # can see the persistent cache is doing its job.
+    assert not _is_suppressed("cache hit: sess_x/c1 (review)")
     assert not _is_suppressed("progress: fetching PR ...")
 
 

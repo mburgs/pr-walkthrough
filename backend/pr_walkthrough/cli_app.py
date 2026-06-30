@@ -279,8 +279,6 @@ _SUPPRESS_PATTERNS = (
     re.compile(r"\bLocal:\s+http"),
     re.compile(r"\bNetwork:"),
     re.compile(r"^\s*press h \+ enter"),
-    # Suppress per-chunk debug noise — useful for verbose mode only
-    re.compile(r"\bcache hit\b"),
     re.compile(r"chunk worker"),
 )
 
@@ -291,11 +289,17 @@ _PROGRESS_PATTERNS: tuple[tuple[re.Pattern, str, str], ...] = (
     (re.compile(r"progress:\s*PR fetched\s*(.*)$"),   "ok",   "PR fetched {1}"),
     (re.compile(r"progress:\s*planning tour"),        "step", "planning tour"),
     (re.compile(r"progress:\s*tour ready\s*(.*)$"),   "ok",   "tour ready {1}"),
+    (re.compile(r"progress:\s*cache enabled\s*\((.+)\)"),
+                                                      "ok",   "cache enabled ({1})"),
+    (re.compile(r"progress:\s*cache disabled\s*(.*)$"),
+                                                      "warn", "cache disabled {1}"),
     (re.compile(r"spawning LSP server\s+(\S+)\s+for\s+(\S+)"),
                                                       "step", "spawning LSP ({2})"),
     (re.compile(r"retriever:\s*LSP for\s+(\S+)"),     "ok",   "LSP active for {1}"),
     (re.compile(r"retriever:\s*ripgrep fallback for\s+(\S+).*?(install [^.]+)\.?"),
                                                       "warn", "no LSP for {1} — install: {2}"),
+    (re.compile(r"\bcache hit\b:\s*\S+/(\S+)\s*\((\S+)\)"),
+                                                      "ok",   "cache hit {1} ({2})"),
 )
 
 _ERROR_HINTS = (

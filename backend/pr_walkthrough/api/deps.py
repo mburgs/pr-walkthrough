@@ -36,16 +36,29 @@ def get_app_context() -> "AppContext":
         # Opt-in persistent narration + TTS cache (driven by the user's
         # global config via the CLI). Legacy `uvicorn`-only launches
         # without the env var get the previous behaviour: no cache.
+        import logging
+        log = logging.getLogger("pr_walkthrough.cache")
         cache_obj = None
         if os.environ.get("PR_WALKTHROUGH_CACHE"):
             try:
-                from pr_walkthrough.cache import PersistentCache
+                from pr_walkthrough.cache import PersistentCache, default_cache_path, prompt_version
                 max_gb = float(
                     os.environ.get("PR_WALKTHROUGH_CACHE_MAX_GB", "1") or "1"
                 )
                 cache_obj = PersistentCache(max_bytes=int(max_gb * 1_073_741_824))
+                # Surface a one-line cache status so the user can see
+                # this run is actually wired up (and what prompt
+                # version any hits/misses will key under).
+                used_mb = cache_obj.total_bytes() / 1e6
+                log.info(
+                    "progress: cache enabled (%s, %.1f MB used, prompts v%s)",
+                    default_cache_path(), used_mb, prompt_version()[:8],
+                )
             except Exception:  # pragma: no cover - defensive
+                log.warning("persistent cache failed to initialise", exc_info=True)
                 cache_obj = None
+        else:
+            log.info("progress: cache disabled (set [cache] enabled=true in ~/.config/pr-walkthrough/config.toml)")
         _app_context = AppContext(repos_dir=repos_dir, cache=cache_obj)
     return _app_context
 
