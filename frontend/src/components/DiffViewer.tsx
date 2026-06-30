@@ -224,6 +224,14 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
                       : `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
                     const showUp = hunk.newStart > 1;
                     const busy = expandingFile === filePath;
+                    // Hide the trailing ▼ once we know the file length and
+                    // the last hunk already reaches the end. Before the file
+                    // is fetched we keep the button optimistically; the
+                    // first click pulls the lines and a re-render hides it.
+                    const knownLines = fileLines[filePath];
+                    const lastHunkNewEnd = hunk.newStart + hunk.newLines - 1;
+                    const showTailDown =
+                      !knownLines || lastHunkNewEnd < knownLines.length;
                     // react-diff-view's <Decoration> destructures children
                     // as `[gutter, content]` when given more than one — extra
                     // children are silently dropped. Pack everything into a
@@ -259,7 +267,7 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
                       </Decoration>,
                       <DiffHunk key={hunk.content} hunk={hunk} />,
                     ];
-                    if (idx === hs.length - 1) {
+                    if (idx === hs.length - 1 && showTailDown) {
                       nodes.push(
                         <Decoration key={`dec-tail-${hunk.content}`}>
                           <span className={styles.hunkGapGutter} aria-hidden>⋮</span>

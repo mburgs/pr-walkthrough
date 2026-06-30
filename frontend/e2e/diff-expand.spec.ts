@@ -34,6 +34,27 @@ test.describe("expand-context buttons", () => {
     await expect(hunkHeader).toContainText("@@ -32,22 +32,38 @@", { timeout: 5_000 });
   });
 
+  test("trailing ▼ disappears after we reach the end of the file", async ({ page }) => {
+    await page.goto(APP);
+    await expect(page.getByText(/Rotate session tokens/i).first()).toBeVisible({ timeout: 15_000 });
+    // Use c3 — fixture chunk added a new test file with new_range starting
+    // at line 1 and 38 lines long. MSW returns 120 stub lines, so the
+    // trailing ▼ should be active initially. After 9 clicks (90 lines pulled)
+    // we'd reach line 120 → trailing button disappears.
+    await page.locator('button:has-text("c3")').first().click();
+    const tail = page.locator(".diff-decoration:has-text('end of hunk')");
+    const downBtn = tail.locator('button[aria-label="Expand context down"]');
+    await expect(downBtn).toBeVisible();
+    // Click until we hit the file boundary. Cap loop iterations defensively.
+    for (let i = 0; i < 15; i++) {
+      if (!(await downBtn.isVisible().catch(() => false))) break;
+      await downBtn.click();
+      // Give state a tick to flush
+      await page.waitForTimeout(50);
+    }
+    await expect(downBtn).toBeHidden();
+  });
+
   test("▼ pulls more context below the last hunk", async ({ page }) => {
     await page.goto(APP);
     await expect(page.getByText(/Rotate session tokens/i).first()).toBeVisible({ timeout: 15_000 });
