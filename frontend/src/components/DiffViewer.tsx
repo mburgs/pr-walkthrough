@@ -1,7 +1,10 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parseDiff, Diff, Hunk as DiffHunk, Decoration, tokenize } from "react-diff-view";
 import { refractor } from "refractor/all";
 import type { CodeAnchor } from "../contracts";
+import { useSession } from "../contexts/SessionContext";
+import { getRepoFile } from "../api/client";
+import { applyExpansion, EXPAND_LINES } from "../lib/diffExpand";
 
 /**
  * refractor v5 returns a hast `Root` node from highlight(); react-diff-view's
@@ -69,13 +72,66 @@ function hunksToUnifiedDiff(file: string, hunks: Hunk[]): string {
 
 export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const fileGroups = useMemo(() => {
+  const { session } = useSession();
+  // Per-file hunks overriding chunk.hunks once the user starts pulling more
+  // context. Initialised from chunk.hunks on every chunk change so navigating
+  // chunks doesn't carry stale expansions across.
+  const initialFileGroups = useMemo(() => {
     const groups: Record<string, Hunk[]> = {};
     for (const hunk of chunk.hunks) {
       (groups[hunk.file] ??= []).push(hunk);
     }
     return groups;
   }, [chunk]);
+  const [hunksByFile, setHunksByFile] = useState<Record<string, Hunk[]>>(initialFileGroups);
+  // Cache of fetched file contents (lines) per file path. Survives across
+  // expand clicks on the same file; reset on chunk change.
+  const [fileLines, setFileLines] = useState<Record<string, string[]>>({});
+  const [expandingFile, setExpandingFile] = useState<string | null>(null);
+  const fileLinesRef = useRef(fileLines);
+  useEffect(() => { fileLinesRef.current = fileLines; }, [fileLines]);
+
+  useEffect(() => {
+    setHunksByFile(initialFileGroups);
+    setFileLines({});
+  }, [initialFileGroups]);
+
+  const fileGroups = hunksByFile;
+
+  const ensureFileLines = useCallback(async (file: string): Promise<string[] | null> => {
+    const cached = fileLinesRef.current[file];
+    if (cached) return cached;
+    if (!session) return null;
+    try {
+      const res = await getRepoFile(session.plan.session_id, file);
+      // Strip a single trailing newline so the line count matches the file's
+      // actual content (Unix files commonly end with \n; splitting on "\n"
+      // would otherwise produce a phantom empty last line that throws off
+      // the file-boundary cap in expand-down).
+      const text = res.content.endsWith("\n") ? res.content.slice(0, -1) : res.content;
+      const lines = text.split("\n");
+      setFileLines((prev) => ({ ...prev, [file]: lines }));
+      return lines;
+    } catch (e) {
+      console.warn("expand-context fetch failed for", file, e);
+      return null;
+    }
+  }, [session]);
+
+  const expand = useCallback(async (file: string, idx: number, direction: "up" | "down") => {
+    if (expandingFile) return;
+    setExpandingFile(file);
+    try {
+      const lines = await ensureFileLines(file);
+      if (!lines) return;
+      setHunksByFile((prev) => {
+        const current = prev[file] ?? [];
+        return { ...prev, [file]: applyExpansion(current, idx, direction, lines, EXPAND_LINES) };
+      });
+    } finally {
+      setExpandingFile(null);
+    }
+  }, [ensureFileLines, expandingFile]);
 
   // Highlight + scroll the rows matching activeAnchor's new-side line range.
   // react-diff-view tags each tr with .diff-line and uses the second gutter td
@@ -103,7 +159,7 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
     if (matched.length === 0) return;
     // Scroll the first matched line into view (smooth)
     matched[0].scrollIntoView({ behavior: "smooth", block: "center" });
-  }, [activeAnchor, chunk]);
+  }, [activeAnchor, chunk, hunksByFile]);
 
   if (chunk.hunks.length === 0) {
     return <div className={styles.noHunks}>No diff hunks for this chunk.</div>;
@@ -155,12 +211,10 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
                   className={styles.diffTable}
                 >
                   {(hs) => hs.flatMap((hunk, idx) => {
-                    // Show a header row before every hunk so non-contiguous
-                    // ranges read as separate (lines 454-459 jumping to 624
-                    // otherwise looks contiguous). The first hunk gets the
-                    // raw @@ line; subsequent ones get an explicit
-                    // "… N lines hidden …" hint based on the gap from the
-                    // previous hunk's new-side end.
+                    // Decoration above every hunk (gap indicator + expand
+                    // controls); plus a trailing decoration after the last
+                    // hunk so the user can pull more context off the bottom
+                    // of the file.
                     const prev = idx > 0 ? hs[idx - 1] : null;
                     const skipped = prev
                       ? hunk.newStart - (prev.newStart + prev.newLines)
@@ -168,13 +222,56 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
                     const label = prev
                       ? `${skipped} line${skipped === 1 ? "" : "s"} hidden`
                       : `@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`;
-                    return [
+                    const showUp = hunk.newStart > 1;
+                    const busy = expandingFile === filePath;
+                    const nodes = [
                       <Decoration key={`dec-${hunk.content}`}>
                         <span className={styles.hunkGapGutter} aria-hidden>⋮</span>
                         <span className={styles.hunkGapLabel}>{label}</span>
+                        <span className={styles.expandBtns}>
+                          {prev && (
+                            <button
+                              type="button"
+                              className={styles.expandBtn}
+                              disabled={busy}
+                              onClick={() => expand(filePath, idx - 1, "down")}
+                              title={`Expand ${EXPAND_LINES} lines down`}
+                              aria-label="Expand context down on previous hunk"
+                            >▼</button>
+                          )}
+                          {showUp && (
+                            <button
+                              type="button"
+                              className={styles.expandBtn}
+                              disabled={busy}
+                              onClick={() => expand(filePath, idx, "up")}
+                              title={`Expand ${EXPAND_LINES} lines up`}
+                              aria-label="Expand context up"
+                            >▲</button>
+                          )}
+                        </span>
                       </Decoration>,
                       <DiffHunk key={hunk.content} hunk={hunk} />,
                     ];
+                    if (idx === hs.length - 1) {
+                      nodes.push(
+                        <Decoration key={`dec-tail-${hunk.content}`}>
+                          <span className={styles.hunkGapGutter} aria-hidden>⋮</span>
+                          <span className={styles.hunkGapLabel}>end of hunk</span>
+                          <span className={styles.expandBtns}>
+                            <button
+                              type="button"
+                              className={styles.expandBtn}
+                              disabled={busy}
+                              onClick={() => expand(filePath, idx, "down")}
+                              title={`Expand ${EXPAND_LINES} lines down`}
+                              aria-label="Expand context down"
+                            >▼</button>
+                          </span>
+                        </Decoration>
+                      );
+                    }
+                    return nodes;
                   })}
                 </Diff>
               </div>

@@ -210,6 +210,39 @@
   padding-left: 6px;
 }
 
+/* Expand-context buttons inside hunk-gap decorations. Pull more
+   surrounding source lines (▲ up / ▼ down). Sit to the right of the
+   gap label; small + monochrome so they read as affordances rather
+   than calls to action. */
+.expandBtns {
+  display: inline-flex;
+  gap: 4px;
+  margin-left: 10px;
+  vertical-align: middle;
+}
+
+.expandBtn {
+  background: var(--surface-2);
+  border: 1px solid var(--border-soft);
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: color 120ms, border-color 120ms, background 120ms;
+}
+.expandBtn:hover:not(:disabled) {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--surface);
+}
+.expandBtn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* Row hover */
 .diffTable :global(tr:hover) :global(.diff-code-normal) {
   background: rgba(255, 255, 255, 0.025) !important;
