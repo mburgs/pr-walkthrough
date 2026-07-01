@@ -16,8 +16,10 @@ Discovery order for each language:
   1. Path in the resolved Config.lsp_paths (set by the CLI install flow)
   2. Bare binary name on PATH
 
-We do *not* try to install missing servers here — that's the CLI's job
-(see `pr_walkthrough.cli_app`). Detection is read-only.
+We do *not* try to install missing servers here — that's
+`pr-walkthrough setup`'s job (see `pr_walkthrough.setup_cmd`). The
+launcher (`cli_app`) only warns when a server is missing; detection
+here stays read-only.
 """
 
 from __future__ import annotations
