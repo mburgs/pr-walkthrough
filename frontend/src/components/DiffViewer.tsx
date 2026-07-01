@@ -41,23 +41,6 @@ function githubBlobUrl(pr: PRMetadata, file: string, line?: number): string {
   return line != null ? `${base}#L${line}` : base;
 }
 
-/**
- * Turn a raw code snippet into a synthetic unified diff whose lines are
- * all context (space-prefixed). react-diff-view then renders them as
- * plain rows with gutters showing the true file line numbers, and the
- * existing refractor tokenize path handles syntax highlighting.
- */
-function snippetToUnifiedDiff(file: string, startLine: number, snippet: string): string {
-  const bodyLines = snippet.split("\n").map((l) => ` ${l}`);
-  const count = bodyLines.length;
-  return [
-    `diff --git a/${file} b/${file}`,
-    `--- a/${file}`,
-    `+++ b/${file}`,
-    `@@ -${startLine},${count} +${startLine},${count} @@`,
-    ...bodyLines,
-  ].join("\n");
-}
 
 /* ------------------------------------------------------------------ *
  * Language inference from file extension. Sticking to the languages
@@ -342,6 +325,7 @@ export default function DiffViewer({ chunk, narration = null, activeAnchor = nul
               key={`ref-${i}-${r.anchor.file}-${r.anchor.line_range[0]}`}
               related={r}
               pr={pr ?? null}
+              sessionId={session?.plan.session_id ?? null}
             />
           ))}
         </div>
@@ -350,16 +334,89 @@ export default function DiffViewer({ chunk, narration = null, activeAnchor = nul
   );
 }
 
+/**
+ * Build the initial Hunk for a reference snippet. All lines are
+ * context (no +/-), so both old and new ranges match the snippet's
+ * start/count. Kept in Hunk shape so we can reuse `applyExpansion`
+ * for the ▲/▼ arrows without a separate code path.
+ */
+function snippetToHunk(file: string, startLine: number, snippet: string): Hunk {
+  const bodyLines = snippet.split("\n");
+  const count = bodyLines.length;
+  return {
+    file,
+    old_range: [startLine, count],
+    new_range: [startLine, count],
+    header: `@@ -${startLine},${count} +${startLine},${count} @@`,
+    body: bodyLines.map((l) => " " + l).join("\n"),
+  };
+}
+
 function ReferenceFileCard({
   related,
   pr,
+  sessionId,
 }: {
   related: RelatedCode;
   pr: PRMetadata | null;
+  sessionId: string | null;
 }) {
-  const { anchor, relationship, snippet } = related;
+  const { anchor, relationship, snippet, target_line } = related;
   const lang = languageFor(anchor.file);
-  const diffText = snippetToUnifiedDiff(anchor.file, anchor.line_range[0], snippet);
+  const cardRef = useRef<HTMLDivElement>(null);
+  const [hunks, setHunks] = useState<Hunk[]>(() =>
+    [snippetToHunk(anchor.file, anchor.line_range[0], snippet)]
+  );
+  const [fileLines, setFileLines] = useState<string[] | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  // Reset when the related item identity changes (new narration).
+  useEffect(() => {
+    setHunks([snippetToHunk(anchor.file, anchor.line_range[0], snippet)]);
+    setFileLines(null);
+  }, [anchor.file, anchor.line_range, snippet]);
+
+  const ensureLines = useCallback(async (): Promise<string[] | null> => {
+    if (fileLines) return fileLines;
+    if (!sessionId) return null;
+    try {
+      const res = await getRepoFile(sessionId, anchor.file);
+      const text = res.content.endsWith("\n") ? res.content.slice(0, -1) : res.content;
+      const lines = text.split("\n");
+      setFileLines(lines);
+      return lines;
+    } catch (e) {
+      console.warn("reference expand fetch failed for", anchor.file, e);
+      return null;
+    }
+  }, [fileLines, sessionId, anchor.file]);
+
+  const expand = useCallback(async (direction: "up" | "down") => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const lines = await ensureLines();
+      if (!lines) return;
+      setHunks((prev) => applyExpansion(prev, prev.length - 1, direction, lines, EXPAND_LINES));
+    } finally {
+      setBusy(false);
+    }
+  }, [busy, ensureLines]);
+
+  // Paint the retriever's target line with a subtle backlight so the
+  // reviewer sees which row was the match without losing the
+  // surrounding context. Uses the new-side gutter text to find the row.
+  useEffect(() => {
+    const root = cardRef.current;
+    if (!root || target_line == null) return;
+    root.querySelectorAll(`.${styles.targetRow}`).forEach(el => el.classList.remove(styles.targetRow));
+    root.querySelectorAll<HTMLTableRowElement>("tr.diff-line").forEach(tr => {
+      const ln = readNewSideLine(tr);
+      if (ln === target_line) tr.classList.add(styles.targetRow);
+    });
+  }, [target_line, hunks]);
+
+  const diffText = hunksToUnifiedDiff(anchor.file, hunks);
   let parsedFiles: ReturnType<typeof parseDiff> = [];
   try {
     parsedFiles = parseDiff(diffText);
@@ -382,8 +439,15 @@ function ReferenceFileCard({
       console.warn("syntax highlight failed for reference snippet", lang, e);
     }
   }
+
+  const currentHunk = hunks[0];
+  const rangeStart = currentHunk.new_range[0];
+  const rangeEnd = rangeStart + currentHunk.new_range[1] - 1;
+  const canUp = rangeStart > 1;
+  const canDown = !fileLines || rangeEnd < fileLines.length;
+
   return (
-    <div className={`${styles.file} ${styles.referenceFile}`}>
+    <div ref={cardRef} className={`${styles.file} ${styles.referenceFile}`}>
       <div className={styles.fileHeader}>
         <span className={styles.referenceBadge} title="Pulled in for context — not part of this PR">
           REFERENCE
@@ -392,7 +456,7 @@ function ReferenceFileCard({
         {pr ? (
           <a
             className={styles.fileName}
-            href={githubBlobUrl(pr, anchor.file, anchor.line_range[0])}
+            href={githubBlobUrl(pr, anchor.file, target_line ?? anchor.line_range[0])}
             target="_blank"
             rel="noreferrer"
             title={`Open ${anchor.file} on GitHub @ ${pr.head_sha.slice(0, 7)}`}
@@ -411,7 +475,44 @@ function ReferenceFileCard({
           tokens={tokens}
           className={styles.diffTable}
         >
-          {(hs) => hs.map((hunk) => <DiffHunk key={hunk.content} hunk={hunk} />)}
+          {(hs) => hs.flatMap((hunk, idx) => {
+            const nodes: React.ReactElement[] = [
+              <Decoration key={`ref-dec-up-${hunk.content}`}>
+                <span className={styles.gutterArrows}>
+                  {canUp && (
+                    <button
+                      type="button"
+                      className={styles.gutterArrowBtn}
+                      disabled={busy}
+                      onClick={() => expand("up")}
+                      title={`Expand ${EXPAND_LINES} lines up`}
+                      aria-label="Expand context up"
+                    >↑</button>
+                  )}
+                </span>
+                <span className={styles.hunkGapLabel} />
+              </Decoration>,
+              <DiffHunk key={hunk.content} hunk={hunk} />,
+            ];
+            if (idx === hs.length - 1 && canDown) {
+              nodes.push(
+                <Decoration key={`ref-dec-down-${hunk.content}`}>
+                  <span className={styles.gutterArrows}>
+                    <button
+                      type="button"
+                      className={styles.gutterArrowBtn}
+                      disabled={busy}
+                      onClick={() => expand("down")}
+                      title={`Expand ${EXPAND_LINES} lines down`}
+                      aria-label="Expand context down"
+                    >↓</button>
+                  </span>
+                  <span className={styles.hunkGapLabel} />
+                </Decoration>
+              );
+            }
+            return nodes;
+          })}
         </Diff>
       </div>
     </div>

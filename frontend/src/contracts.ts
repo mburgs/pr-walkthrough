@@ -75,6 +75,10 @@ export interface RelatedCode {
   anchor: CodeAnchor;
   relationship: RelationshipKind;
   snippet: string;
+  /** The specific line the retriever matched (LSP hit or ripgrep line).
+   * Used by the UI to paint a subtle backlight on that row, without
+   * losing the surrounding context. 1-indexed, inside anchor.line_range. */
+  target_line: number | null;
 }
 
 export interface Concern {

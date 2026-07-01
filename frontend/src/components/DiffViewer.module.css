@@ -316,6 +316,27 @@ a.fileName:hover {
   background: var(--surface);
 }
 
+/* Reference snippets are all-context (no +/-), so the two gutters
+ * react-diff-view renders in unified mode carry identical line
+ * numbers ("90 | 90 | code"). Hide the old-side gutter — the new-side
+ * one is enough. */
+.referenceFile .diffTable :global(td.diff-gutter):first-of-type {
+  display: none;
+}
+
+/* The specific line the retriever matched. Painted with a soft
+ * backlight — obvious enough to spot at a glance, subtle enough
+ * not to compete with the main narration spotlight. */
+.diffTable :global(tr.diff-line).targetRow :global(.diff-code),
+.diffTable :global(tr.diff-line).targetRow :global(.diff-code-normal) {
+  background: rgba(212, 255, 58, 0.06) !important;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+.diffTable :global(tr.diff-line).targetRow :global(.diff-gutter) {
+  color: var(--accent) !important;
+  background: rgba(212, 255, 58, 0.05) !important;
+}
+
 .referenceBadge {
   font-size: 9.5px;
   font-weight: 700;

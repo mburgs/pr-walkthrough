@@ -109,9 +109,12 @@ def _uri_to_path(uri: str) -> Path | None:
 
 
 def _read_snippet_around(
-    path: Path, line_1indexed: int, before: int = 1, after: int = 4,
+    path: Path, line_1indexed: int, before: int = 3, after: int = 3,
 ) -> tuple[int, int, str]:
-    """Read lines around `line_1indexed`. Returns (start, end, text)."""
+    """Read symmetric context around `line_1indexed`. Returns
+    (start, end, text). Symmetric because a callsite is usually easier
+    to read with a couple of lines above the call *and* below it —
+    asymmetric context misses the setup or the follow-through."""
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
@@ -290,4 +293,5 @@ def _location_to_related(
         anchor=CodeAnchor(file=rel_str, line_range=(snip_start, snip_end)),
         relationship=relationship,
         snippet=snippet,
+        target_line=line_1,
     )

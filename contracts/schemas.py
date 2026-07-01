@@ -120,6 +120,12 @@ class RelatedCode(BaseModel):
     anchor: CodeAnchor
     relationship: RelationshipKind
     snippet: str  # already extracted by the backend; UI just displays
+    # The specific line the retriever pointed at (the LSP hit itself,
+    # not the surrounding context). The UI paints this row with a
+    # subtle backlight so the reviewer can see which line was matched
+    # without losing the surrounding context. 1-indexed, inside anchor
+    # range. Defaults to anchor.line_range[0] for backward-compat.
+    target_line: int | None = None
 
 
 class Concern(BaseModel):

@@ -397,6 +397,7 @@ class RipgrepContextRetriever:
                     anchor=_CA(file=cand["file"], line_range=(snip_start, snip_end)),
                     relationship=cand["relationship"],
                     snippet=snippet,
+                    target_line=cand["lineno"],
                 )
             )
 
