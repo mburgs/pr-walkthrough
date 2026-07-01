@@ -228,7 +228,9 @@ def ensure_ripgrep_installed() -> str:
             "not on PATH.\n\n"
             "  • macOS:  brew install ripgrep\n"
             "  • Debian/Ubuntu:  sudo apt-get install ripgrep\n"
-            "  • Other:  https://github.com/BurntSushi/ripgrep#installation\n"
+            "  • Other:  https://github.com/BurntSushi/ripgrep#installation\n\n"
+            "`pr-walkthrough setup` checks for this on every run and will "
+            "tell you if it's missing.\n"
         )
     return found
 

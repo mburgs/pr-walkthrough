@@ -40,6 +40,15 @@ from typing import IO
 import httpx
 
 from pr_walkthrough import config as cfg_mod
+from pr_walkthrough.cli_style import (
+    S as _S,
+    err as _print_err,
+    ok as _print_ok,
+    section as _print_section,
+    step as _print_step,
+    warn as _print_warn,
+)
+from pr_walkthrough.venv_util import find_venv_bin as _find_venv_bin, project_dirs
 
 log = logging.getLogger(__name__)
 
@@ -137,15 +146,12 @@ def _gh_pr_files(pr_url: str) -> list[str]:
         return []
 
 
-def _check_and_offer_lsp_install(pr_url: str) -> None:
-    """Inspect the PR's languages; for any missing LSP server, prompt
-    the user to install it. Confirmed installs run in the foreground.
-    Non-TTY (CI) silently skips the prompt — the backend still works
-    via ripgrep fallback.
-
-    Implementation note: re-checking PATH after install picks up the
-    new binary for the backend subprocess because we inherit env, and
-    `shutil.which()` re-walks PATH each call."""
+def _check_lsp_and_warn(pr_url: str) -> None:
+    """Inspect the PR's languages and warn about any missing LSP server
+    so the user understands retrieval is falling back to ripgrep.
+    Installing servers is `pr-walkthrough setup`'s job, not something
+    this launch path does — a PR launch shouldn't block on a foreground
+    package install."""
     from pr_walkthrough.context.lsp.detect import (
         install_hint, language_for_files, resolve_server_command,
     )
@@ -156,32 +162,11 @@ def _check_and_offer_lsp_install(pr_url: str) -> None:
     missing = [lang for lang in languages if resolve_server_command(lang) is None]
     if not missing:
         return
-    _print_section(f"This PR touches {', '.join(sorted(languages))}")
-    print(_S.dim("    LSP gives precise find-references; ripgrep is the fallback"), flush=True)
     for lang in sorted(missing):
         hint = install_hint(lang)
         if not hint:
             continue
-        if not sys.stdin.isatty():
-            _print_warn(f"{lang}: missing LSP. To install: {hint}")
-            continue
-        ans = input(f"    Install LSP for {lang}? Run `{_S.bold(hint)}` [Y/n] ").strip().lower()
-        if ans in ("", "y", "yes"):
-            _print_step(f"installing {lang} LSP…")
-            try:
-                # Capture so package-manager noise doesn't drown the CLI;
-                # surface stderr only on failure.
-                result = subprocess.run(
-                    hint.split(), capture_output=True, text=True, timeout=300,
-                )
-                if result.returncode == 0:
-                    _print_ok(f"installed {lang} LSP")
-                else:
-                    _print_err(f"install failed for {lang}; continuing without LSP")
-                    if result.stderr.strip():
-                        print(_S.dim(result.stderr.strip()), file=sys.stderr, flush=True)
-            except (FileNotFoundError, subprocess.TimeoutExpired) as e:
-                _print_err(f"install failed ({e}); continuing without LSP for {lang}")
+        _print_warn(f"no LSP for {lang} — using ripgrep fallback (run `pr-walkthrough setup` to install: {hint})")
 
 
 _FAMILIARITY_MENU = (
@@ -303,51 +288,6 @@ def pick_port() -> int:
     port = s.getsockname()[1]
     s.close()
     return port
-
-
-# --------------------------------------------------------------------------- styling
-
-
-class _Style:
-    """ANSI colour helpers. No-ops when stdout isn't a TTY so piped /
-    redirected output stays clean."""
-
-    def __init__(self) -> None:
-        enable = sys.stdout.isatty() and os.environ.get("NO_COLOR") is None
-        self._on = enable
-
-    def _wrap(self, code: str, text: str) -> str:
-        return f"\033[{code}m{text}\033[0m" if self._on else text
-
-    def ok(self, t: str) -> str:    return self._wrap("32", t)           # green
-    def warn(self, t: str) -> str:  return self._wrap("33", t)           # yellow
-    def err(self, t: str) -> str:   return self._wrap("31", t)           # red
-    def arrow(self, t: str) -> str: return self._wrap("36", t)           # cyan
-    def dim(self, t: str) -> str:   return self._wrap("2", t)
-    def bold(self, t: str) -> str:  return self._wrap("1", t)
-
-
-_S = _Style()
-
-
-def _print_step(label: str) -> None:
-    print(f"  {_S.arrow('→')} {label}", flush=True)
-
-
-def _print_ok(label: str) -> None:
-    print(f"  {_S.ok('✓')} {label}", flush=True)
-
-
-def _print_warn(label: str) -> None:
-    print(f"  {_S.warn('!')} {label}", flush=True)
-
-
-def _print_err(label: str) -> None:
-    print(f"  {_S.err('✗')} {label}", file=sys.stderr, flush=True)
-
-
-def _print_section(label: str) -> None:
-    print(f"\n{_S.bold(label)}", flush=True)
 
 
 # --------------------------------------------------------------------------- log filter
@@ -521,18 +461,6 @@ def repo_root_from_args(args: argparse.Namespace, pr_url: str) -> Path:
 # --------------------------------------------------------------------------- main
 
 
-def _find_venv_bin(repo_root: Path, exe: str) -> str:
-    """Find an installed binary in a `.venv` — main repo first, then any
-    sibling worktree's venv (so a shared venv across worktrees works).
-    Falls back to the bare binary name (PATH lookup) if no venv found."""
-    candidates = [repo_root / ".venv" / "bin" / exe]
-    candidates.extend(p / exe for p in (repo_root / ".claude" / "worktrees").glob("*/.venv/bin"))
-    for c in candidates:
-        if c.is_file() and os.access(c, os.X_OK):
-            return str(c)
-    return exe
-
-
 def _warn_if_no_kokoro() -> None:
     """Loudly nudge the user toward Kokoro if it isn't installed.
 
@@ -549,7 +477,7 @@ def _warn_if_no_kokoro() -> None:
     except Exception:
         pass  # treat any import failure as "not available"
     _print_warn("Kokoro TTS not installed — falling back to macOS `say` (robotic)")
-    print(_S.dim("    install: pip install -e 'backend[kokoro]'  (~300 MB on first run)"), flush=True)
+    print(_S.dim("    run `pr-walkthrough setup` to install a better voice"), flush=True)
 
 
 def _wait_for_health(port: int, timeout: float = 30.0) -> bool:
@@ -596,7 +524,7 @@ def _create_session(backend_port: int, pr_url: str, familiarity: str) -> str:
     return r.json()["session_id"]
 
 
-def main(argv: list[str] | None = None) -> int:
+def _run(argv: list[str] | None = None) -> int:
     logging.basicConfig(
         level=logging.WARNING,
         format="%(message)s",
@@ -621,9 +549,9 @@ def main(argv: list[str] | None = None) -> int:
     global_cfg = cfg_mod.ensure_global_config_exists()
     cfg = cfg_mod.load_config(repo_root)
 
-    # 3. LSP install offer (pre-flight, before backend boots so new
-    # binaries are on PATH when uvicorn spawns)
-    _check_and_offer_lsp_install(pr_url)
+    # 3. LSP check (pre-flight, before backend boots) — warns only;
+    # `pr-walkthrough setup` is where servers actually get installed.
+    _check_lsp_and_warn(pr_url)
 
     # 4. Familiarity
     familiarity = args.familiarity or cfg.familiarity or prompt_familiarity()
@@ -632,10 +560,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     # 4. Resolve repo + script locations
-    cli_path = Path(__file__).resolve()
-    backend_dir = cli_path.parent.parent  # backend/
-    project_root = backend_dir.parent     # repo root
-    frontend_dir = project_root / "frontend"
+    project_root, backend_dir, frontend_dir = project_dirs(Path(__file__))
 
     # Allow being run from a worktree — the script is inside the worktree.
     uvicorn_exe = _find_venv_bin(project_root, "uvicorn")
@@ -666,18 +591,13 @@ def main(argv: list[str] | None = None) -> int:
     # doesn't sit through a session of robot voice and wonder why.
     _warn_if_no_kokoro()
 
-    # 6. Frontend deps
+    # 6. Frontend deps — checked, not installed here. Installing is the
+    # installer's job (scripts/install.sh); a PR launch shouldn't stall
+    # on a first-time npm install.
     if not (frontend_dir / "node_modules" / ".bin" / "vite").exists():
-        _print_step("installing frontend deps (one-time)…")
-        result = subprocess.run(
-            ["npm", "install"], cwd=frontend_dir,
-            capture_output=True, text=True,
-        )
-        if result.returncode != 0:
-            _print_err("npm install failed:")
-            print(result.stderr or result.stdout, file=sys.stderr)
-            return 1
-        _print_ok("frontend deps installed")
+        _print_err("frontend dependencies aren't installed")
+        print(_S.dim(f"    fix: cd {frontend_dir} && npm install"), file=sys.stderr, flush=True)
+        return 1
 
     # 7. Spawn backend + frontend
     _print_section("Starting services")
@@ -751,3 +671,31 @@ def main(argv: list[str] | None = None) -> int:
         pass
     _shutdown()
     return 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    """Console-script entry point.
+
+    Dispatches `pr-walkthrough setup` to the setup command; everything
+    else runs the launcher. Wraps the launcher so an unexpected
+    exception prints one friendly line instead of a raw traceback —
+    set PR_WALKTHROUGH_DEBUG=1 to see the full thing.
+    """
+    raw_argv = sys.argv[1:] if argv is None else argv
+    if raw_argv[:1] == ["setup"]:
+        from pr_walkthrough.setup_cmd import main as setup_main
+        return setup_main(raw_argv[1:])
+    try:
+        return _run(raw_argv)
+    except KeyboardInterrupt:
+        print()
+        return 130
+    except Exception as e:
+        _print_err(f"pr-walkthrough hit an unexpected error: {e}")
+        if os.environ.get("PR_WALKTHROUGH_DEBUG"):
+            import traceback
+            traceback.print_exc()
+        else:
+            print(_S.dim("    (set PR_WALKTHROUGH_DEBUG=1 to see the full traceback)"),
+                  file=sys.stderr, flush=True)
+        return 1

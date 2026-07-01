@@ -15,21 +15,36 @@ Prereqs: Python 3.11+, Node 20+, `gh` authed, an Anthropic API key,
 macOS or Linux.
 
 ```bash
+curl -fsSL https://raw.githubusercontent.com/mburgs/pr-walkthrough/main/scripts/install.sh | bash
+```
+
+Clones into `~/.pr-walkthrough`, creates a venv, installs the Python +
+frontend dependencies, and links `pr-walkthrough` onto `~/.local/bin`.
+Re-running it updates to the latest `main` and refreshes dependencies —
+safe to pipe into `bash` again any time.
+
+Set the API key, then run the optional setup wizard — it offers a
+higher-quality TTS voice, warms up the local STT model, installs
+language servers for whichever languages you pick, and writes your
+config file. Also safe to re-run any time; it only touches what's
+missing.
+
+```bash
+export ANTHROPIC_API_KEY=sk-ant-...
+pr-walkthrough setup
+```
+
+<details>
+<summary>Install from source instead</summary>
+
+```bash
 git clone https://github.com/mburgs/pr-walkthrough && cd pr-walkthrough
 python -m venv .venv && source .venv/bin/activate
 pip install -e backend -e .
 (cd frontend && npm install)
 ```
 
-Optional: install [Kokoro](https://huggingface.co/hexgrad/Kokoro-82M)
-for higher-quality TTS (`pip install -e 'backend[kokoro]'`; ~300 MB of
-weights download on first run). Without it, macOS `say` is the fallback.
-
-Set the API key:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-```
+</details>
 
 ## Run
 
@@ -72,6 +87,11 @@ key includes a hash of `pr_walkthrough/llm/prompts.py`).
 
 To disable caching: set `[cache] enabled = false` in the global
 config, or unset `PR_WALKTHROUGH_CACHE` in the env.
+
+`pr-walkthrough setup` is the friendly way to edit this — familiarity
+default, TTS engine, and LSP paths are all set from there instead of
+by hand. Pass `-y`/`--yes` to accept the recommended defaults without
+prompting.
 
 ## Stack
 
