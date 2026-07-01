@@ -78,7 +78,23 @@ _IMPORT_LINE_RES = (
 
 
 MAX_IDENTIFIERS = 8
-MAX_RESULTS = 12
+MAX_RESULTS = 8
+
+# Per-seed reference cap. Without this, the first common-ish symbol
+# (say `Transparency` — an imported enum used everywhere) fills the
+# global MAX_RESULTS quota with its 30+ callsites before any other
+# identifier gets a chance. 3 is enough to hint at usage patterns
+# without swamping less-common symbols that are usually more
+# interesting for a review.
+REFS_PER_SEED = 3
+
+# If a symbol has more references than this, treat it as
+# "widely-shared plumbing" (types, constants imported everywhere) and
+# suppress its callsite hits entirely — keep only its definition. Real
+# subjects of a change tend to have narrow reference sets (a new
+# function has 0–5 callers day one); wide reference sets almost always
+# indicate a supporting type the reviewer already understands.
+OVER_REFERENCED_THRESHOLD = 20
 
 
 def _is_import_line(line: str) -> bool:
@@ -188,6 +204,18 @@ class LSPContextRetriever:
         if not seeds:
             return []
 
+        # Bias toward snake_case / lowercase identifiers before
+        # CamelCase types. In practice the "target of the change" is a
+        # function/variable name (snake_case in py/rs/go, camelCase in
+        # js/ts), while CamelCase names tend to be types/enums that
+        # are imported for use — background plumbing that dominates
+        # reference counts and rarely helps the reviewer.
+        def _seed_score(seed: tuple[int, int, str]) -> tuple[int, int, str]:
+            ident = seed[2]
+            is_capital = ident[:1].isupper()
+            return (1 if is_capital else 0, seed[0], ident)
+        seeds.sort(key=_seed_score)
+
         repo_root_resolved = repo_root.resolve()
         results: list[RelatedCode] = []
         seen_keys: set[tuple[str, int]] = set()
@@ -214,13 +242,25 @@ class LSPContextRetriever:
                 if len(results) >= MAX_RESULTS:
                     return results
 
-            # 2. References (cap roughly to spread across symbols)
+            # 2. References. Two guards against a common-shared symbol
+            # (imported enum, base class) burying the interesting hits:
+            # skip refs entirely for over-referenced symbols, and cap
+            # per-seed to spread the global quota across seeds.
             try:
                 refs = await client.references(anchor_uri, zero_line, col)
             except Exception as exc:
                 log.debug("LSP references failed for %s: %s", ident, exc)
                 refs = []
+            if len(refs) > OVER_REFERENCED_THRESHOLD:
+                log.debug(
+                    "LSP: %s has %d refs; suppressing callsites (kept definition)",
+                    ident, len(refs),
+                )
+                continue
+            per_seed_added = 0
             for r in refs:
+                if per_seed_added >= REFS_PER_SEED:
+                    break
                 hit = _location_to_related(
                     r, repo_root_resolved, anchor.file, a_start, a_end, "callsite",
                 )
@@ -231,6 +271,7 @@ class LSPContextRetriever:
                     continue
                 seen_keys.add(key)
                 results.append(hit)
+                per_seed_added += 1
                 if len(results) >= MAX_RESULTS:
                     return results
 
