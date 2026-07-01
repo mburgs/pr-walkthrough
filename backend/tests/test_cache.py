@@ -6,12 +6,20 @@ from pathlib import Path
 
 import pytest
 
-from contracts.schemas import ChunkNarration, NarrationSegment
+from contracts.schemas import (
+    ChunkNarration,
+    Hunk,
+    NarrationSegment,
+    PRMetadata,
+    TourChunk,
+    TourPlan,
+)
 from pr_walkthrough.cache import (
     PersistentCache,
     audio_cache_key,
     narration_cache_key,
     prompt_version,
+    tour_plan_cache_key,
 )
 
 
@@ -51,6 +59,45 @@ def test_audio_round_trip(tmp_path: Path) -> None:
     audio, offsets = got
     assert audio == b"RIFF...wav"
     assert offsets == [0, 250, 500]
+
+
+def _tour_plan() -> TourPlan:
+    pr = PRMetadata(
+        url="https://x", repo="foo/bar", number=1, title="t", author="a",
+        base_ref="main", head_ref="feat", base_sha="0" * 40, head_sha="1" * 40,
+        body="",
+    )
+    hunk = Hunk(
+        file="a.py", old_range=(0, 0), new_range=(1, 1),
+        header="@@ -0,0 +1,1 @@", body="+x",
+    )
+    return TourPlan(
+        session_id="sess_x",
+        pr=pr,
+        chunks=[
+            TourChunk(
+                chunk_id="c1", files=["a.py"], hunks=[hunk],
+                summary="s", rationale_for_position="r", est_concern_level="low",
+            ),
+        ],
+    )
+
+
+def test_tour_plan_round_trip(tmp_path: Path) -> None:
+    cache = PersistentCache(tmp_path / "c.db")
+    key = tour_plan_cache_key("foo/bar", "abc123")
+    assert cache.get_tour_plan(key) is None
+
+    cache.put_tour_plan(key, _tour_plan())
+    got = cache.get_tour_plan(key)
+    assert got is not None
+    assert got.pr.repo == "foo/bar"
+    assert got.chunks[0].chunk_id == "c1"
+
+
+def test_tour_plan_key_includes_prompt_version() -> None:
+    key = tour_plan_cache_key("foo/bar", "abc123")
+    assert prompt_version() in key
 
 
 def test_prompt_version_is_stable() -> None:

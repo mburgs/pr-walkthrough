@@ -69,12 +69,34 @@ async def create_session(
         len({h.file for h in hunks}), "s" if len({h.file for h in hunks}) != 1 else "",
         len(hunks), "s" if len(hunks) != 1 else "",
     )
-    log.info("progress: planning tour")
-    plan = await ctx.llm.plan_tour(metadata, hunks)
-    log.info(
-        "progress: tour ready (%d chunk%s)",
-        len(plan.chunks), "s" if len(plan.chunks) != 1 else "",
-    )
+
+    # Cache hit skips the ~20s plan_tour LLM call. Keyed by (repo,
+    # head_sha, prompt_version) so a re-run on the same revision loads
+    # instantly and a new push (new head_sha) or prompt change misses.
+    plan = None
+    cache = getattr(ctx, "cache", None)
+    plan_key = None
+    if cache is not None:
+        from pr_walkthrough.cache import tour_plan_cache_key
+        plan_key = tour_plan_cache_key(metadata.repo, metadata.head_sha)
+        plan = cache.get_tour_plan(plan_key)
+    if plan is not None:
+        log.info(
+            "progress: tour ready from cache (%d chunk%s)",
+            len(plan.chunks), "s" if len(plan.chunks) != 1 else "",
+        )
+    else:
+        log.info("progress: planning tour")
+        plan = await ctx.llm.plan_tour(metadata, hunks)
+        if cache is not None and plan_key is not None:
+            try:
+                cache.put_tour_plan(plan_key, plan)
+            except Exception:
+                log.warning("failed to persist tour plan to cache", exc_info=True)
+        log.info(
+            "progress: tour ready (%d chunk%s)",
+            len(plan.chunks), "s" if len(plan.chunks) != 1 else "",
+        )
 
     # The LLM populates session_id in its structured output, but it can pick a
     # deterministic-looking ID (e.g. "sess_cli_cli_pr1") which collides on

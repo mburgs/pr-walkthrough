@@ -5,6 +5,7 @@ The SessionStore (sqlite, `backend/sessions.db`) is keyed by random
 fresh CLI run produces a fresh session_id and re-issues every LLM + TTS
 call. This cache sits parallel to it and is keyed by content:
 
+  tour_plans: (repo_slug, head_sha, prompt_version)
   narration : (repo_slug, head_sha, chunk_id, level, prompt_version)
   audio     : (narration_hash, engine)
 
@@ -32,11 +33,19 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from contracts.schemas import ChunkNarration
+from contracts.schemas import ChunkNarration, TourPlan
 
 log = logging.getLogger(__name__)
 
 _SCHEMA = """
+CREATE TABLE IF NOT EXISTS tour_plans (
+    key         TEXT PRIMARY KEY,
+    plan_json   TEXT NOT NULL,
+    size_bytes  INTEGER NOT NULL,
+    created_at  REAL NOT NULL,
+    accessed_at REAL NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS narrations (
     key            TEXT PRIMARY KEY,
     narration_json TEXT NOT NULL,
@@ -54,6 +63,7 @@ CREATE TABLE IF NOT EXISTS audio (
     accessed_at  REAL NOT NULL
 );
 
+CREATE INDEX IF NOT EXISTS ix_tour_plans_accessed ON tour_plans(accessed_at);
 CREATE INDEX IF NOT EXISTS ix_narrations_accessed ON narrations(accessed_at);
 CREATE INDEX IF NOT EXISTS ix_audio_accessed      ON audio(accessed_at);
 """
@@ -88,6 +98,14 @@ def prompt_version() -> str:
         except Exception:
             _PROMPT_VERSION_CACHE = "unknown"
     return _PROMPT_VERSION_CACHE
+
+
+def tour_plan_cache_key(repo_slug: str, head_sha: str) -> str:
+    """Key for the LLM-produced tour plan of a specific PR revision.
+
+    Includes prompt_version so a change to prompts.py (which owns the
+    plan-tour prompt shape) auto-invalidates cached plans."""
+    return f"{repo_slug}|{head_sha}|{prompt_version()}"
 
 
 def narration_cache_key(
@@ -131,6 +149,44 @@ class PersistentCache:
             conn.executescript(_SCHEMA)
             self._local.conn = conn
         yield self._local.conn
+
+    # ---------------------------------------------------------- tour plans
+
+    def get_tour_plan(self, key: str) -> TourPlan | None:
+        with self._conn() as conn:
+            row = conn.execute(
+                "SELECT plan_json FROM tour_plans WHERE key = ?", (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        try:
+            plan = TourPlan.model_validate_json(row["plan_json"])
+        except Exception:
+            log.warning("corrupt tour_plan cache row for %s; dropping", key)
+            self._delete_tour_plan(key)
+            return None
+        self._touch("tour_plans", key)
+        return plan
+
+    def put_tour_plan(self, key: str, plan: TourPlan) -> None:
+        payload = plan.model_dump_json()
+        size = len(payload.encode("utf-8"))
+        now = time.time()
+        with self._conn() as conn:
+            conn.execute(
+                """INSERT INTO tour_plans (key, plan_json, size_bytes, created_at, accessed_at)
+                   VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(key) DO UPDATE SET
+                       plan_json=excluded.plan_json,
+                       size_bytes=excluded.size_bytes,
+                       accessed_at=excluded.accessed_at""",
+                (key, payload, size, now, now),
+            )
+        self._maybe_evict()
+
+    def _delete_tour_plan(self, key: str) -> None:
+        with self._conn() as conn:
+            conn.execute("DELETE FROM tour_plans WHERE key = ?", (key,))
 
     # ----------------------------------------------------------- narration
 
@@ -215,7 +271,8 @@ class PersistentCache:
         with self._conn() as conn:
             n = conn.execute("SELECT COALESCE(SUM(size_bytes),0) FROM narrations").fetchone()[0]
             a = conn.execute("SELECT COALESCE(SUM(size_bytes),0) FROM audio").fetchone()[0]
-        return int(n) + int(a)
+            t = conn.execute("SELECT COALESCE(SUM(size_bytes),0) FROM tour_plans").fetchone()[0]
+        return int(n) + int(a) + int(t)
 
     def _maybe_evict(self) -> None:
         """LRU eviction. Cheap when cache is well under the cap; only
@@ -227,12 +284,14 @@ class PersistentCache:
             return
         target = int(self._max_bytes * 0.9)  # leave 10% headroom after eviction
         with self._conn() as conn:
-            # Union the two tables by accessed_at ascending — oldest first.
+            # Union the tables by accessed_at ascending — oldest first.
             rows = conn.execute(
                 """
                 SELECT 'audio' AS tbl, key, size_bytes, accessed_at FROM audio
                 UNION ALL
                 SELECT 'narrations' AS tbl, key, size_bytes, accessed_at FROM narrations
+                UNION ALL
+                SELECT 'tour_plans' AS tbl, key, size_bytes, accessed_at FROM tour_plans
                 ORDER BY accessed_at ASC
                 """
             ).fetchall()
