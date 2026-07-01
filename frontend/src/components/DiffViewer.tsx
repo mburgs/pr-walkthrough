@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { parseDiff, Diff, Hunk as DiffHunk, Decoration, tokenize } from "react-diff-view";
 import { refractor } from "refractor/all";
-import type { CodeAnchor } from "../contracts";
+import type { ChunkNarration, CodeAnchor, PRMetadata, RelatedCode } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import { getRepoFile } from "../api/client";
 import { applyExpansion, EXPAND_LINES } from "../lib/diffExpand";
@@ -24,8 +24,39 @@ import styles from "./DiffViewer.module.css";
 
 interface Props {
   chunk: TourChunk;
+  /** Narration for this chunk — supplies related-code snippets rendered
+   * as extra "reference" file cards below the main diff. Optional so the
+   * diff area works while narration is still loading. */
+  narration?: ChunkNarration | null;
   /** Lines to spotlight (highlight + scroll) — driven by the active narration segment. */
   activeAnchor?: CodeAnchor | null;
+}
+
+/**
+ * Build a GitHub blob URL pinned to the PR's head_sha. Optionally append
+ * a `#L<line>` anchor so the browser scrolls to the right spot.
+ */
+function githubBlobUrl(pr: PRMetadata, file: string, line?: number): string {
+  const base = `https://github.com/${pr.repo}/blob/${pr.head_sha}/${file}`;
+  return line != null ? `${base}#L${line}` : base;
+}
+
+/**
+ * Turn a raw code snippet into a synthetic unified diff whose lines are
+ * all context (space-prefixed). react-diff-view then renders them as
+ * plain rows with gutters showing the true file line numbers, and the
+ * existing refractor tokenize path handles syntax highlighting.
+ */
+function snippetToUnifiedDiff(file: string, startLine: number, snippet: string): string {
+  const bodyLines = snippet.split("\n").map((l) => ` ${l}`);
+  const count = bodyLines.length;
+  return [
+    `diff --git a/${file} b/${file}`,
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    `@@ -${startLine},${count} +${startLine},${count} @@`,
+    ...bodyLines,
+  ].join("\n");
 }
 
 /* ------------------------------------------------------------------ *
@@ -70,9 +101,10 @@ function hunksToUnifiedDiff(file: string, hunks: Hunk[]): string {
   return lines.join("\n");
 }
 
-export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
+export default function DiffViewer({ chunk, narration = null, activeAnchor = null }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const { session } = useSession();
+  const pr = session?.plan.pr;
   // Per-file hunks overriding chunk.hunks once the user starts pulling more
   // context. Initialised from chunk.hunks on every chunk change so navigating
   // chunks doesn't carry stale expansions across.
@@ -198,7 +230,17 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
             <div key={`${filePath}-${i}`} className={styles.file} data-file={filePath}>
               <div className={styles.fileHeader}>
                 <span className={styles.fileIcon} aria-hidden>◰</span>
-                <span className={styles.fileName}>{filePath}</span>
+                {pr ? (
+                  <a
+                    className={styles.fileName}
+                    href={githubBlobUrl(pr, filePath)}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={`Open ${filePath} on GitHub @ ${pr.head_sha.slice(0, 7)}`}
+                  >{filePath}</a>
+                ) : (
+                  <span className={styles.fileName}>{filePath}</span>
+                )}
                 <span className={styles.fileType}>{parsed.type}</span>
                 {lang && <span className={styles.langBadge}>{lang}</span>}
               </div>
@@ -289,6 +331,108 @@ export default function DiffViewer({ chunk, activeAnchor = null }: Props) {
           );
         });
       })}
+
+      {narration && narration.related_code.length > 0 && (
+        <div className={styles.referenceGroup}>
+          <div className={styles.referenceGroupHeader}>
+            Referenced code — pulled in for context, not part of this PR
+          </div>
+          {narration.related_code.map((r, i) => (
+            <ReferenceFileCard
+              key={`ref-${i}-${r.anchor.file}-${r.anchor.line_range[0]}`}
+              related={r}
+              pr={pr ?? null}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ReferenceFileCard({
+  related,
+  pr,
+}: {
+  related: RelatedCode;
+  pr: PRMetadata | null;
+}) {
+  const { anchor, relationship, snippet } = related;
+  const lang = languageFor(anchor.file);
+  const diffText = snippetToUnifiedDiff(anchor.file, anchor.line_range[0], snippet);
+  let parsedFiles: ReturnType<typeof parseDiff> = [];
+  try {
+    parsedFiles = parseDiff(diffText);
+  } catch {
+    return <FallbackReference anchor={anchor} snippet={snippet} relationship={relationship} />;
+  }
+  const parsed = parsedFiles[0];
+  if (!parsed) {
+    return <FallbackReference anchor={anchor} snippet={snippet} relationship={relationship} />;
+  }
+  let tokens: ReturnType<typeof tokenize> | undefined;
+  if (lang) {
+    try {
+      tokens = tokenize(parsed.hunks, {
+        refractor: refractorAdapter as any,
+        language: lang,
+        highlight: true,
+      });
+    } catch (e) {
+      console.warn("syntax highlight failed for reference snippet", lang, e);
+    }
+  }
+  return (
+    <div className={`${styles.file} ${styles.referenceFile}`}>
+      <div className={styles.fileHeader}>
+        <span className={styles.referenceBadge} title="Pulled in for context — not part of this PR">
+          REFERENCE
+        </span>
+        <span className={styles.fileIcon} aria-hidden>◰</span>
+        {pr ? (
+          <a
+            className={styles.fileName}
+            href={githubBlobUrl(pr, anchor.file, anchor.line_range[0])}
+            target="_blank"
+            rel="noreferrer"
+            title={`Open ${anchor.file} on GitHub @ ${pr.head_sha.slice(0, 7)}`}
+          >{anchor.file}</a>
+        ) : (
+          <span className={styles.fileName}>{anchor.file}</span>
+        )}
+        <span className={styles.relationshipBadge}>{relationship}</span>
+        {lang && <span className={styles.langBadge}>{lang}</span>}
+      </div>
+      <div className={styles.diffWrap}>
+        <Diff
+          viewType="unified"
+          diffType="modify"
+          hunks={parsed.hunks}
+          tokens={tokens}
+          className={styles.diffTable}
+        >
+          {(hs) => hs.map((hunk) => <DiffHunk key={hunk.content} hunk={hunk} />)}
+        </Diff>
+      </div>
+    </div>
+  );
+}
+
+function FallbackReference({
+  anchor, snippet, relationship,
+}: {
+  anchor: CodeAnchor;
+  snippet: string;
+  relationship: string;
+}) {
+  return (
+    <div className={`${styles.file} ${styles.referenceFile}`}>
+      <div className={styles.fileHeader}>
+        <span className={styles.referenceBadge}>REFERENCE</span>
+        <span className={styles.fileName}>{anchor.file}</span>
+        <span className={styles.relationshipBadge}>{relationship}</span>
+      </div>
+      <pre className={styles.fallback}>{snippet}</pre>
     </div>
   );
 }

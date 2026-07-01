@@ -78,23 +78,7 @@ _IMPORT_LINE_RES = (
 
 
 MAX_IDENTIFIERS = 8
-MAX_RESULTS = 8
-
-# Per-seed reference cap. Without this, the first common-ish symbol
-# (say `Transparency` — an imported enum used everywhere) fills the
-# global MAX_RESULTS quota with its 30+ callsites before any other
-# identifier gets a chance. 3 is enough to hint at usage patterns
-# without swamping less-common symbols that are usually more
-# interesting for a review.
-REFS_PER_SEED = 3
-
-# If a symbol has more references than this, treat it as
-# "widely-shared plumbing" (types, constants imported everywhere) and
-# suppress its callsite hits entirely — keep only its definition. Real
-# subjects of a change tend to have narrow reference sets (a new
-# function has 0–5 callers day one); wide reference sets almost always
-# indicate a supporting type the reviewer already understands.
-OVER_REFERENCED_THRESHOLD = 20
+MAX_RESULTS = 12
 
 
 def _is_import_line(line: str) -> bool:
@@ -148,8 +132,21 @@ class LSPContextRetriever:
         return lang is not None and self._pool.is_available(lang)
 
     async def related(
-        self, anchor: CodeAnchor, repo_root: Path,
+        self,
+        anchor: CodeAnchor,
+        repo_root: Path,
+        seed_lines: set[int] | None = None,
     ) -> list[RelatedCode]:
+        """Look up related code via LSP.
+
+        ``seed_lines`` (1-indexed, new-side) restricts identifier mining
+        to those specific lines within the anchor range. Callers pass
+        the set of ``+`` lines from the chunk's hunks so the retriever
+        seeds only from lines that actually changed — context lines
+        around the change are still "already visible" (filtered out of
+        results) but don't contribute noise identifiers. When ``None``,
+        the full anchor range is mined (legacy behaviour).
+        """
         lang = language_for_file(anchor.file)
         if lang is None:
             return []
@@ -178,11 +175,22 @@ class LSPContextRetriever:
             log.info("LSP did_open failed: %s", exc)
             return []
 
-        # Collect identifiers from non-import anchor lines, preserving
+        # Which lines to mine? If the caller pinned seed_lines to the
+        # changed (+) lines, use those; otherwise scan the whole anchor.
+        # An explicitly-empty seed_lines means "the chunk has nothing
+        # LSP-queryable here" (e.g. deletion-only chunk) — return early.
+        if seed_lines is not None:
+            if not seed_lines:
+                return []
+            candidate_lines = sorted(n for n in seed_lines if a_start <= n <= a_end)
+        else:
+            candidate_lines = list(range(a_start, a_end + 1))
+
+        # Collect identifiers from non-import candidate lines, preserving
         # source order so we explore the most "user-visible" symbols first.
         seeds: list[tuple[int, int, str]] = []  # (line, col, ident)
         seen_idents: set[str] = set()
-        for line_no in range(a_start, a_end + 1):
+        for line_no in candidate_lines:
             if not (1 <= line_no <= len(source_lines)):
                 continue
             line_str = source_lines[line_no - 1]
@@ -203,18 +211,6 @@ class LSPContextRetriever:
 
         if not seeds:
             return []
-
-        # Bias toward snake_case / lowercase identifiers before
-        # CamelCase types. In practice the "target of the change" is a
-        # function/variable name (snake_case in py/rs/go, camelCase in
-        # js/ts), while CamelCase names tend to be types/enums that
-        # are imported for use — background plumbing that dominates
-        # reference counts and rarely helps the reviewer.
-        def _seed_score(seed: tuple[int, int, str]) -> tuple[int, int, str]:
-            ident = seed[2]
-            is_capital = ident[:1].isupper()
-            return (1 if is_capital else 0, seed[0], ident)
-        seeds.sort(key=_seed_score)
 
         repo_root_resolved = repo_root.resolve()
         results: list[RelatedCode] = []
@@ -242,25 +238,13 @@ class LSPContextRetriever:
                 if len(results) >= MAX_RESULTS:
                     return results
 
-            # 2. References. Two guards against a common-shared symbol
-            # (imported enum, base class) burying the interesting hits:
-            # skip refs entirely for over-referenced symbols, and cap
-            # per-seed to spread the global quota across seeds.
+            # 2. References
             try:
                 refs = await client.references(anchor_uri, zero_line, col)
             except Exception as exc:
                 log.debug("LSP references failed for %s: %s", ident, exc)
                 refs = []
-            if len(refs) > OVER_REFERENCED_THRESHOLD:
-                log.debug(
-                    "LSP: %s has %d refs; suppressing callsites (kept definition)",
-                    ident, len(refs),
-                )
-                continue
-            per_seed_added = 0
             for r in refs:
-                if per_seed_added >= REFS_PER_SEED:
-                    break
                 hit = _location_to_related(
                     r, repo_root_resolved, anchor.file, a_start, a_end, "callsite",
                 )
@@ -271,7 +255,6 @@ class LSPContextRetriever:
                     continue
                 seen_keys.add(key)
                 results.append(hit)
-                per_seed_added += 1
                 if len(results) >= MAX_RESULTS:
                     return results
 

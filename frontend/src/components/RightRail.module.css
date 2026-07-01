@@ -224,30 +224,6 @@
 }
 .anchorLine { color: var(--accent); }
 
-.relationship {
-  font-size: 10px;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: var(--info);
-  background: rgba(124, 156, 255, 0.12);
-  padding: 1px 6px;
-  border-radius: var(--radius-sm);
-}
-
-.snippet {
-  font-family: var(--font-mono);
-  font-size: 11.5px;
-  line-height: 1.45;
-  color: var(--text);
-  background: var(--bg);
-  border: 1px solid var(--border-soft);
-  border-radius: var(--radius-sm);
-  padding: 8px 10px;
-  white-space: pre-wrap;
-  word-break: break-word;
-  overflow-x: auto;
-}
-
 .quotedQ {
   font-family: var(--font-sans);
   font-size: 12px;

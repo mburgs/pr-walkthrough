@@ -28,19 +28,19 @@ class HybridContextRetriever:
         self._lsp = LSPContextRetriever(self._pool)
         self._rg = RipgrepContextRetriever()
 
-    async def related(self, anchor, repo_root):
+    async def related(self, anchor, repo_root, seed_lines=None):
         # Try LSP first if a server for this language is available; on
         # failure or empty result, fall back to ripgrep. Empty is
         # treated as "no idea" not "definitively no related code" —
         # the ripgrep pass might still surface useful sibling code.
         if self._lsp.is_available(anchor.file):
             try:
-                hits = await self._lsp.related(anchor, repo_root)
+                hits = await self._lsp.related(anchor, repo_root, seed_lines=seed_lines)
                 if hits:
                     return hits
             except Exception:
                 log.warning("LSP retriever raised; falling back to ripgrep", exc_info=True)
-        return await self._rg.related(anchor, repo_root)
+        return await self._rg.related(anchor, repo_root, seed_lines=seed_lines)
 
     async def aclose(self) -> None:
         await self._pool.aclose()

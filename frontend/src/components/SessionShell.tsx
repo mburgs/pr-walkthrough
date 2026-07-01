@@ -85,7 +85,11 @@ export default function SessionShell() {
       <main className={styles.center}>
         <div className={styles.diffArea}>
           {currentChunk ? (
-            <DiffViewer chunk={currentChunk} activeAnchor={activeAnchor} />
+            <DiffViewer
+              chunk={currentChunk}
+              narration={currentNarration}
+              activeAnchor={activeAnchor}
+            />
           ) : (
             <div className={styles.emptyCenter}>Select a chunk to begin.</div>
           )}

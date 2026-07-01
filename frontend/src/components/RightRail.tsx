@@ -8,9 +8,6 @@ import type {
 } from "../contracts";
 import { useSession } from "../contexts/SessionContext";
 import NarrationPlayer from "./NarrationPlayer";
-import RelatedCodeModal from "./RelatedCodeModal";
-import type { RelatedCode } from "../contracts";
-import { highlightSnippet, languageFor, renderHast } from "../lib/highlight";
 import styles from "./RightRail.module.css";
 
 interface Props {
@@ -32,10 +29,10 @@ function anchorEq(a: CodeAnchor | null | undefined, b: CodeAnchor | null | undef
 }
 
 /**
- * Right rail: unified accordion stack — narration player + highlights,
- * concerns, related, and the Flags tracker — all in one
- * scroll. Each section shows its count and is auto-collapsed when empty.
- * The whole rail collapses to a thin icon strip for diff-focused work.
+ * Right rail: narration player + Flags tracker (with LLM-proposed concerns
+ * inlined as "proposed" flags). The whole rail collapses to a thin icon
+ * strip for diff-focused work. Related code is rendered inside the diff
+ * itself (see DiffViewer), not in this rail.
  */
 export default function RightRail({
   chunk,
@@ -52,7 +49,6 @@ export default function RightRail({
   const visibleConcerns = (narration?.concerns ?? []).filter(
     (c) => !(dismissedConcerns[narration?.chunk_id ?? ""]?.has(concernKey(c))),
   );
-  const [openRelated, setOpenRelated] = useState<RelatedCode | null>(null);
   // When a CollapsedDot is clicked, remember which section the user
   // wanted; after the rail expands we scroll to it + auto-open it.
   // Cleared on a short delay so subsequent collapse/expand cycles don't
@@ -62,9 +58,8 @@ export default function RightRail({
 
   const sectionCounts = useMemo(() => ({
     concerns:   visibleConcerns.length,
-    related:    narration?.related_code.length ?? 0,
     flags:      flags.length,
-  }), [visibleConcerns, narration, flags]);
+  }), [visibleConcerns, flags]);
 
   const handleDotClick = (key: string) => {
     if (collapsed) onToggle();
@@ -124,10 +119,6 @@ export default function RightRail({
 
       {collapsed ? (
         <div className={styles.collapsedStack}>
-          <CollapsedDot label="Concerns" count={sectionCounts.concerns} variant="warn"
-            onClick={() => handleDotClick("concerns")} />
-          <CollapsedDot label="Related" count={sectionCounts.related} variant="muted"
-            onClick={() => handleDotClick("related")} />
           <CollapsedDot label="Flags" count={sectionCounts.concerns + sectionCounts.flags} variant="accent"
             onClick={() => handleDotClick("flags")} />
         </div>
@@ -163,51 +154,7 @@ export default function RightRail({
               <div className={styles.emptyHint}>No concerns flagged for this chunk yet.</div>
             )}
           </Section>
-
-          <Section
-            key="related"
-            title="Related"
-            count={sectionCounts.related}
-            defaultOpen={false}
-            triggerOpen={pendingSection === "related"}
-            innerRef={(el) => { sectionRefs.current["related"] = el; }}
-          >
-            {narration?.related_code.map((r, i) => {
-              const lang = languageFor(r.anchor.file);
-              const hast = highlightSnippet(r.snippet, lang);
-              return (
-                <div
-                  key={i}
-                  className={`${styles.row} ${styles.clickable}`}
-                  role="button"
-                  tabIndex={0}
-                  onClick={() => setOpenRelated(r)}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      setOpenRelated(r);
-                    }
-                  }}
-                  title="Click to expand"
-                >
-                  <div className={styles.rowHeader}>
-                    <span className={styles.relationship}>{r.relationship}</span>
-                    <Anchor file={r.anchor.file} line={r.anchor.line_range} />
-                  </div>
-                  <pre className={styles.snippet}>
-                    {hast ? renderHast(hast) : r.snippet}
-                  </pre>
-                </div>
-              );
-            })}
-          </Section>
         </div>
-      )}
-      {openRelated && (
-        <RelatedCodeModal
-          related={openRelated}
-          onClose={() => setOpenRelated(null)}
-        />
       )}
     </div>
   );

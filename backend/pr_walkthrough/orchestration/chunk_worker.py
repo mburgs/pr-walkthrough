@@ -9,6 +9,7 @@ import re
 from contracts.schemas import (
     ChunkNarration,
     CodeAnchor,
+    Hunk,
     NarrationSegment,
     TourChunk,
     TourPlan,
@@ -18,6 +19,42 @@ from . import app_context as _ctx_module
 from .event_bus import publish
 
 log = logging.getLogger(__name__)
+
+
+def _added_lines(hunks: list[Hunk]) -> set[int]:
+    """Return the 1-indexed new-side line numbers marked with ``+`` in
+    the given hunks. Removed (``-``) lines don't map to a new-side line
+    so they're skipped; the retriever can't LSP-query the pre-change
+    file anyway."""
+    added: set[int] = set()
+    for h in hunks:
+        cur = h.new_range[0]
+        for raw in h.body.split("\n"):
+            if not raw:
+                continue
+            prefix = raw[0]
+            if prefix == "+":
+                added.add(cur)
+                cur += 1
+            elif prefix == "-":
+                # deletion: consumes an old-side line, no new-side move
+                continue
+            else:
+                # context (' ') or unfamiliar prefix — advance new side
+                cur += 1
+    return added
+
+
+def _new_side_span(hunks: list[Hunk]) -> tuple[int, int]:
+    """Bounding new-side (start, end) across all hunks. Fallback to a
+    single-line span at the first hunk's start when everything is empty
+    (e.g. pure removal)."""
+    ranges = [(h.new_range[0], h.new_range[0] + max(h.new_range[1], 1) - 1)
+              for h in hunks if h.new_range[1] > 0]
+    if not ranges:
+        first = hunks[0].new_range[0]
+        return (first, first)
+    return (min(s for s, _ in ranges), max(e for _, e in ranges))
 
 
 async def _publish_phase(session_id: str, chunk_id: str, phase: str) -> None:
@@ -148,13 +185,22 @@ async def process_chunk(
                     )
                     return
 
-        # 2. Fetch related context for this chunk (use first hunk anchor)
+        # 2. Fetch related context for this chunk. We seed only from the
+        # `+` lines of the chunk's hunks — those carry the actual change
+        # signal. The anchor spans the union of new-side line ranges so
+        # the retriever knows what's "already visible" (hits landing
+        # inside the visible hunks are the anchor itself, not related).
         related = []
         if chunk.hunks:
-            h = chunk.hunks[0]
-            anchor = CodeAnchor(file=h.file, line_range=(h.new_range[0], h.new_range[0]))
+            first_file = chunk.hunks[0].file
+            same_file_hunks = [h for h in chunk.hunks if h.file == first_file]
+            seed_lines = _added_lines(same_file_hunks)
+            anchor_range = _new_side_span(same_file_hunks)
+            anchor = CodeAnchor(file=first_file, line_range=anchor_range)
             try:
-                related = await ctx.context.related(anchor, ctx.repo_root_for(plan))
+                related = await ctx.context.related(
+                    anchor, ctx.repo_root_for(plan), seed_lines=seed_lines,
+                )
             except Exception:
                 log.warning("context retrieval failed for %s", chunk.chunk_id, exc_info=True)
 

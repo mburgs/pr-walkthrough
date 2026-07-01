@@ -300,6 +300,7 @@ class RipgrepContextRetriever:
         self,
         anchor: "CodeAnchor",  # noqa: F821 — imported at call site
         repo_root: Path,
+        seed_lines: set[int] | None = None,
     ) -> "list[RelatedCode]":  # noqa: F821
         from contracts.schemas import CodeAnchor as _CA, RelatedCode as _RC  # type: ignore
 
@@ -311,10 +312,23 @@ class RipgrepContextRetriever:
         if not anchor_path.exists():
             return []
 
-        # 1. Read anchor lines
+        # 1. Read anchor lines. If seed_lines was passed, restrict to
+        # those specific new-side line numbers so we mine symbols only
+        # from the changed lines, not the surrounding context.
         offsets = _build_line_offsets(anchor_path)
-        anchor_lines = _read_lines(offsets=offsets, path=anchor_path,
-                                   start=anchor_start, end=anchor_end)
+        if seed_lines is not None:
+            if not seed_lines:
+                return []
+            in_range = sorted(n for n in seed_lines if anchor_start <= n <= anchor_end)
+            if not in_range:
+                return []
+            anchor_lines = "\n".join(
+                _read_lines(offsets=offsets, path=anchor_path, start=n, end=n)
+                for n in in_range
+            )
+        else:
+            anchor_lines = _read_lines(offsets=offsets, path=anchor_path,
+                                       start=anchor_start, end=anchor_end)
 
         # 2. Extract symbols
         symbols = _extract_symbols(anchor_lines)
