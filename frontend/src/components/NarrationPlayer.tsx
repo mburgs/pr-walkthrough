@@ -52,6 +52,12 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
     const raw = Number(localStorage.getItem(SPEED_STORAGE_KEY));
     return SPEEDS.includes(raw as (typeof SPEEDS)[number]) ? raw : 1;
   });
+  // Script visibility — collapsed by default so the player is just
+  // audio + scrub bar. MUST live at the top of the component (above
+  // the `if (compact)` early return), otherwise toggling the rail's
+  // collapse changes the hook call order and React unmounts the
+  // whole tree.
+  const [scriptOpen, setScriptOpen] = useState(false);
 
   // Append this chunk's gen counter as a cache-bust so the audio element
   // re-fetches after a regenerate (same URL otherwise → browser plays stale
@@ -326,13 +332,6 @@ export default function NarrationPlayer({ chunk, narration, loading, onSegmentCh
       </>
     );
   }
-
-  // Script visibility: collapsed by default. Most reviewers just want
-  // the audio + scrub bar; only those who lose focus / can't hear it
-  // actually need to read the text. Click "show script" to expand.
-  const [scriptOpen, setScriptOpen] = useState(false);
-  // Auto-expand when the narration finishes loading + the user hasn't
-  // toggled it yet would be too eager; default false stays.
 
   return (
     <>

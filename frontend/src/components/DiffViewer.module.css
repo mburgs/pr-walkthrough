@@ -256,12 +256,22 @@
   transition: background 200ms ease;
 }
 .diffTable :global(tr.diff-line).activeRow :global(.diff-gutter),
+.diffTable :global(tr.diff-line).activeRow :global(.diff-gutter-insert),
+.diffTable :global(tr.diff-line).activeRow :global(.diff-gutter-delete),
 .activeRow :global(.diff-gutter) {
   background: var(--accent-muted) !important;
   color: var(--accent) !important;
   border-left-color: var(--accent) !important;
 }
+/* The add/delete variants are `diff-code-insert` / `diff-code-delete`
+ * (separate classes, not additive on `diff-code`), so the active-row
+ * accent has to name all three or +/- rows fall back to the green/red
+ * tint with no spotlight. Visible regression: clicking a flag anchor
+ * range that included a changed line only lit up the unchanged context
+ * lines around it. */
 .diffTable :global(tr.diff-line).activeRow :global(.diff-code),
+.diffTable :global(tr.diff-line).activeRow :global(.diff-code-insert),
+.diffTable :global(tr.diff-line).activeRow :global(.diff-code-delete),
 .activeRow :global(.diff-code) {
   background: var(--accent-muted) !important;
   color: var(--text-strong) !important;

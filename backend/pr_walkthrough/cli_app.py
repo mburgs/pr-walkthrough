@@ -184,23 +184,112 @@ def _check_and_offer_lsp_install(pr_url: str) -> None:
                 _print_err(f"install failed ({e}); continuing without LSP for {lang}")
 
 
+_FAMILIARITY_MENU = (
+    ("tutorial",   "most detailed, beginner-friendly"),
+    ("tour",       "guided walkthrough"),
+    ("review",     "terse code-review focus"),
+    ("highlights", "fastest pass, only the key changes"),
+    ("all",        "generate every level (multi-level mode)"),
+)
+
+
 def prompt_familiarity() -> str:
     """Interactive prompt when --familiarity wasn't passed and stdin is
-    a TTY. Non-TTY (CI, pipes) defaults to 'review' silently."""
+    a TTY. Non-TTY (CI, pipes) defaults to 'review' silently.
+
+    Tries an arrow-key picker first (raw mode + ANSI cursor control).
+    Falls back to a numeric prompt if termios isn't available
+    (Windows, weird PTYs, etc.). Default selection is `review` — the
+    third entry — because that's the most common choice and matches
+    the default familiarity used elsewhere."""
     if not sys.stdin.isatty():
         return "review"
-    print("\nFamiliarity level controls narration detail:")
-    print("  1) tutorial   — most detailed, beginner-friendly")
-    print("  2) tour       — guided walkthrough")
-    print("  3) review     — terse code-review focus  [default]")
-    print("  4) highlights — fastest pass, only the key changes")
-    print("  5) all        — generate every level (multi-level mode)")
+    try:
+        return _arrow_picker(
+            "Familiarity level controls narration detail:",
+            _FAMILIARITY_MENU,
+            default_index=2,
+        )
+    except (ImportError, OSError):
+        # termios isn't available or stdin can't go into raw mode —
+        # fall back to a plain numeric prompt.
+        return _numeric_familiarity_prompt()
+
+
+def _numeric_familiarity_prompt() -> str:
+    print(_S.bold("\nFamiliarity level controls narration detail:"))
+    for i, (name, blurb) in enumerate(_FAMILIARITY_MENU, start=1):
+        suffix = _S.dim(f" [default]") if name == "review" else ""
+        print(f"  {i}) {_S.bold(name):<22} {_S.dim('— ' + blurb)}{suffix}")
     while True:
         choice = input("Choose [1-5, default 3]: ").strip() or "3"
-        mapping = dict(zip("12345", (*_FAMILIARITY_LEVELS, "all")))
+        mapping = {str(i): name for i, (name, _) in enumerate(_FAMILIARITY_MENU, start=1)}
         if choice in mapping:
             return mapping[choice]
-        print(f"  → {choice!r} not understood; pick 1-5")
+        print(f"  {_S.warn('!')} {choice!r} not understood; pick 1-5")
+
+
+def _arrow_picker(
+    title: str,
+    items: tuple[tuple[str, str], ...],
+    default_index: int = 0,
+) -> str:
+    """↑/↓ to move, Enter to confirm. Vim-style j/k also work. Returns
+    the selected item's first column (name).
+
+    Raises ImportError on Windows or any environment where termios
+    isn't usable so the caller can fall back to the numeric prompt."""
+    import termios
+    import tty
+    fd = sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    selected = default_index
+    print(_S.bold(f"\n{title}"))
+    print(_S.dim("  ↑/↓ select · Enter confirm · q cancel\n"))
+    try:
+        tty.setcbreak(fd)
+        # Initial render
+        _render_picker(items, selected)
+        while True:
+            ch = sys.stdin.read(1)
+            if ch == "\x1b":  # ESC — start of arrow sequence
+                seq = sys.stdin.read(2)
+                if seq == "[A":   selected = (selected - 1) % len(items)
+                elif seq == "[B": selected = (selected + 1) % len(items)
+                else:             continue
+            elif ch in ("k", "K"): selected = (selected - 1) % len(items)
+            elif ch in ("j", "J"): selected = (selected + 1) % len(items)
+            elif ch in ("\r", "\n"):
+                # Move past the menu so the next CLI line lands cleanly.
+                print("\n" + _S.ok("✓") + f" familiarity: {_S.bold(items[selected][0])}\n")
+                return items[selected][0]
+            elif ch in ("q", "Q", "\x03"):  # q / Ctrl-C
+                raise KeyboardInterrupt
+            else:
+                continue
+            _redraw_picker(items, selected)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+
+
+def _render_picker(items: tuple[tuple[str, str], ...], selected: int) -> None:
+    for i, (name, blurb) in enumerate(items):
+        marker = _S.ok("›") if i == selected else " "
+        label = _S.bold(name) if i == selected else name
+        suffix = _S.dim(" — " + blurb)
+        line = f"  {marker} {label:<22}{suffix}"
+        print(line)
+
+
+def _redraw_picker(items: tuple[tuple[str, str], ...], selected: int) -> None:
+    # Move cursor up over the previous render and redraw in place. Each
+    # item is one terminal line; we also clear-line on each row.
+    print(f"\033[{len(items)}A", end="")
+    for i, (name, blurb) in enumerate(items):
+        marker = _S.ok("›") if i == selected else " "
+        label = _S.bold(name) if i == selected else name
+        suffix = _S.dim(" — " + blurb)
+        print(f"\033[2K  {marker} {label:<22}{suffix}")
 
 
 # --------------------------------------------------------------------------- ports
