@@ -395,9 +395,31 @@ _ERROR_HINTS = (
     "ERROR", "CRITICAL", "Exception", "Traceback", "raise", "error:",
 )
 
+_TRACEBACK_START_RE = re.compile(r"Traceback \(most recent call last\):")
+_TRACEBACK_CHAIN_RE = re.compile(
+    r"^(During handling of the above exception|The above exception was)"
+)
+
 
 def _is_error_line(line: str) -> bool:
     return any(hint in line for hint in _ERROR_HINTS)
+
+
+def _is_traceback_continuation(line: str) -> bool:
+    """True for lines that belong to a traceback already in progress:
+    indented frame/source lines, or the header of a chained exception.
+
+    Python logs a traceback as N separate lines on the subprocess
+    pipe — the header, one or two lines per frame, then an unindented
+    summary line (`FooError: message`). Read one at a time via
+    `readline`, only the header itself contains an `_ERROR_HINTS`
+    keyword, so without this the frames and the actual exception
+    message get treated as ordinary noise and dropped in non-verbose
+    mode — the user sees a bare "Traceback (most recent call last):"
+    with no indication of what actually failed."""
+    return line[:1].isspace() or bool(_TRACEBACK_CHAIN_RE.search(line)) or bool(
+        _TRACEBACK_START_RE.search(line)
+    )
 
 
 def _is_suppressed(line: str) -> bool:
@@ -433,11 +455,27 @@ def _format_template(template: str, match: re.Match) -> str:
 def _forwarder(stream: IO[bytes], verbose: bool) -> None:
     """Read a subprocess pipe and translate recognized lines to CLI
     status updates; suppress noise; let errors through verbatim."""
+    in_traceback = False
     for raw in iter(stream.readline, b""):
         line = raw.decode("utf-8", errors="replace").rstrip()
         if not line:
             continue
         clean = _strip_log_prefix(line)
+
+        # 0. Mid-traceback: keep forwarding frame/source lines verbatim
+        # until the unindented summary line (`FooError: message`) ends
+        # the block. Without this, everything but the "Traceback
+        # (most recent call last):" header gets swallowed as noise.
+        if in_traceback:
+            if _is_traceback_continuation(clean):
+                _print_err(clean)
+                continue
+            in_traceback = False
+            # fall through — this line starts a fresh entry (often the
+            # exception summary line itself, which still deserves to
+            # print even though it lacks its own `_ERROR_HINTS` keyword).
+            _print_err(clean)
+            continue
 
         # 1. Recognized progress markers → CLI voice
         matched = False
@@ -457,6 +495,8 @@ def _forwarder(stream: IO[bytes], verbose: bool) -> None:
         # 2. Errors pass through with red prefix so the user notices
         if _is_error_line(clean):
             _print_err(clean)
+            if _TRACEBACK_START_RE.search(clean):
+                in_traceback = True
             continue
 
         # 3. Otherwise: only show in verbose mode; suppress known boot
