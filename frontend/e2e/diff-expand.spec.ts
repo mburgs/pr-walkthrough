@@ -63,9 +63,16 @@ test.describe("expand-context buttons", () => {
     await expect(page.getByText(/Rotate session tokens/i).first()).toBeVisible({ timeout: 15_000 });
     await page.locator('button:has-text("c1")').first().click();
 
+    // Scope to the PR diff's own file card. c1's narration also carries a
+    // "related_code" reference snippet for this same file, which renders its
+    // own trailing "Expand context down" decoration (same class + aria-label)
+    // in the reference-cards section further down the page — an unscoped
+    // locator matches both and trips Playwright's strict mode.
+    const fileCard = page.locator('[data-file="src/auth/session.py"]');
+
     // The trailing decoration (after the last hunk) labelled "end of hunk".
     // Trailing decoration: identify by the down-arrow button it carries.
-    const tail = page.locator(".diff-decoration", {
+    const tail = fileCard.locator(".diff-decoration", {
       has: page.locator('button[aria-label="Expand context down"]'),
     });
     await expect(tail).toBeVisible();
@@ -75,7 +82,7 @@ test.describe("expand-context buttons", () => {
     await downBtn.click();
 
     // First hunk header should now have a larger new-side count.
-    const hunkHeader = page.locator(".diff-decoration").first();
+    const hunkHeader = fileCard.locator(".diff-decoration").first();
     // Original was +42,28 → +42,38 after 10 more lines down (capped by file).
     await expect(hunkHeader).toContainText("+42,38", { timeout: 5_000 });
   });
